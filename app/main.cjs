@@ -6,7 +6,8 @@ const { Recording, pending, nextPart, savePart, sessionDir, saveJSON } = require
 
 const { transcribe, checkConnection } = require('./transcription.cjs');
 
-const { RecordShortcut } = require('./shortcuts.cjs');
+const { Updater } = require('./updates.cjs');
+const { RecordShortcut, createMacModifierRegistry, modifierMask } = require('./shortcuts.cjs');
 
 app.setName('Sonat');
 protocol.registerSchemesAsPrivileged([{ scheme: 'sonat', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
@@ -59,12 +60,18 @@ async function setup() {
   try { settings = JSON.parse(await fs.readFile(settingsFile, 'utf8')); }
   catch (e) { if (e.code !== 'ENOENT') throw e; }
 
+  let capturingShortcut = false;
+  function setCapture(active) {
+    capturingShortcut = active;
+    win.webContents.setIgnoreMenuShortcuts(active);
+  }
+  handle('shortcut-capture', active => setCapture(active === true && win.isFocused()));
   let lastShortcutAt = 0;
   function toggleFromKeyboard() {
     const now = Date.now();
     const previous = lastShortcutAt;
     lastShortcutAt = now;
-    if (now - previous < 800 || operation || !win || win.isDestroyed()) return;
+    if (capturingShortcut || now - previous < 800 || operation || !win || win.isDestroyed()) return;
     const contents = win.webContents;
     if (contents.getURL() !== page || contents.isLoadingMainFrame()) return;
     // Display capture needs a focused document and a real initiating user action.
@@ -86,11 +93,26 @@ async function setup() {
     win.show();
     win.focus();
   }
-  const shortcut = new RecordShortcut(globalShortcut, toggleFromKeyboard);
+  const modifierRegistry = createMacModifierRegistry({
+    onError(error) {
+      if (win && !win.isDestroyed()) win.webContents.send('shortcut-error', error.message);
+    }
+  });
+  const shortcut = new RecordShortcut(globalShortcut, toggleFromKeyboard, { modifierRegistry });
+  const updater = new Updater({ app });
+  handle('update-app', () => exclusive('update', async () => {
+    const state = await updater.check();
+    if (state.state === 'current') return 'Установлена последняя версия Sonat ' + state.currentVersion + '.';
+    win.webContents.send('update-progress', 'Загружаем Sonat ' + state.availableVersion + '. Приложение перезапустится после проверки.');
+    await updater.install();
+    return 'Обновление установлено. Перезапускаем Sonat…';
+  }));
   handle('set-shortcut', value => exclusive('shortcut', () => shortcut.change(value,
     key => configure({ shortcut: key }))));
   handle('info', async () => ({
-    shortcut: shortcut.active, shortcutWanted: shortcut.requested,
+    version: app.getVersion(),
+    shortcut: modifierMask(shortcut.active) && !modifierRegistry.isRegistered(shortcut.active) ? '' : shortcut.active,
+    shortcutWanted: shortcut.requested,
     folder: settings.folder || '', automatic: Boolean(settings.apiKey), apiCheck: settings.apiCheck || null,
     pending: settings.folder ? await pending(settings.folder) : []
   }));
@@ -132,23 +154,22 @@ async function setup() {
     const { result } = await safeStorage.decryptStringAsync(Buffer.from(settings.apiKey, 'base64'));
     return result;
   }
-  handle('check-api', () => exclusive('settings', async () => {
-    const key = await savedKey();
-    let result;
-    try {
-      await checkConnection(key);
-      result = { ok: true };
-    } catch (e) {
-      result = { ok: false, message: e.message };
-    }
-    await configure({ apiCheck: { ...result, time: Date.now() } });
-  }));
   handle('api-key', value => exclusive('settings', async () => {
     if (value === null) return configure({ apiKey: null, apiCheck: null });
-    if (typeof value !== 'string' || !value.trim()) throw new Error('Введите ключ проекта OpenAI.');
+    if (typeof value !== 'string') throw new Error('Введите ключ проекта OpenAI.');
+    const candidate = value.trim();
+    if (!candidate && !settings.apiKey) throw new Error('Введите ключ проекта OpenAI.');
+    if (!candidate) {
+      try { await checkConnection(await savedKey()); }
+      catch (e) {
+        await configure({ apiCheck: { ok: false, message: e.message, time: Date.now() } });
+        throw e;
+      }
+      return configure({ apiCheck: { ok: true, time: Date.now() } });
+    }
     if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('Системное шифрование ключа недоступно.');
-    const encrypted = await safeStorage.encryptStringAsync(value.trim());
-    await checkConnection(value.trim());
+    await checkConnection(candidate);
+    const encrypted = await safeStorage.encryptStringAsync(candidate);
     await configure({ apiKey: encrypted.toString('base64'), apiCheck: { ok: true, time: Date.now() } });
   }));
   handle('transcribe', id => exclusive('transcribe', async () => {
@@ -176,8 +197,8 @@ async function setup() {
     width: 720, height: 800, minWidth: 500, minHeight: 560, title: 'Sonat',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
   });
-  shortcut.restore(settings.shortcut);
-  app.on('will-quit', () => globalShortcut.unregisterAll());
+  await shortcut.restore(settings.shortcut);
+  app.on('will-quit', () => { shortcut.destroy(); globalShortcut.unregisterAll(); });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Sonat', submenu: [{ role: 'about', label: 'О Sonat' }, { type: 'separator' }, { label: 'Настройки…', accelerator: 'Command+,', click: () => { win.show(); win.webContents.send('settings'); } }, { type: 'separator' }, { role: 'hide', label: 'Скрыть Sonat' }, { role: 'quit', label: 'Завершить Sonat' }] },
     { label: 'Правка', submenu: [{ role: 'cut', label: 'Вырезать' }, { role: 'copy', label: 'Скопировать' }, { role: 'paste', label: 'Вставить' }, { role: 'selectAll', label: 'Выделить всё' }] },
@@ -192,13 +213,15 @@ async function setup() {
       callback(sources.length ? { video: sources[0], audio: 'loopback' } : {});
     } catch { callback({}); }
   });
+  win.on('blur', () => setCapture(false));
   win.on('close', event => {
-    if (active || operation) {
+    if (active || (operation && updater.status().state !== 'restarting')) {
       event.preventDefault();
       dialog.showMessageBoxSync(win, { message: active ? 'Сначала остановите запись.' : 'Дождитесь завершения операции.' });
     }
   });
   win.webContents.on('render-process-gone', async () => {
+    setCapture(false);
     if (active && operation !== 'finish') await finish().catch(() => {});
     if (!win.isDestroyed()) win.reload();
   });

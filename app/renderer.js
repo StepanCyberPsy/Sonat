@@ -26,7 +26,7 @@ function controls(next) {
   $('record').disabled = !(idle || phase === 'recording' || phase === 'review');
   $('record').textContent = phase === 'recording' ? 'Остановить запись' : 'Начать запись';
   $('record').classList.toggle('recording', phase === 'recording');
-  for (const id of ['modes','folder','apiKey','enableApi','disableApi','checkApi','editShortcut','clearShortcut','shortcutEditor']) $(id).disabled = !idle;
+  for (const id of ['modes','folder','apiKey','enableApi','disableApi','editShortcut','clearShortcut','updateApp']) $(id).disabled = !idle;
   for (const b of $('list').querySelectorAll('button')) b.disabled = !idle;
 }
 async function refresh() {
@@ -35,7 +35,9 @@ async function refresh() {
   $('show').hidden = !prefs.folder;
   $('storageHint').textContent = prefs.folder ? 'Тексты — в этой папке. WAV — в подпапке «Аудио Sonat».' : 'Выберите место на Mac для текстов и аудио.';
   shortcutLabels();
-  $('disableApi').hidden = $('checkApi').hidden = !prefs.automatic;
+  $('disableApi').hidden = !prefs.automatic;
+  $('apiKey').placeholder = prefs.automatic ? 'Сохранённый ключ · введите новый для замены' : 'Ключ проекта';
+  $('appVersion').textContent = 'Sonat ' + (prefs.version || '');
   showApiState();
   $('list').replaceChildren();
   for (const id of prefs.pending) {
@@ -60,16 +62,27 @@ $('modes').onchange = () => {
   $('sourceHint').textContent = mic ? 'Только микрофон' : 'Микрофон + компьютер';
 };
 let listening = false;
-const modifiers = ['Control', 'Alt', 'Shift', 'Command'];
+const sides = ['ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight'];
 const symbols = { Command: '⌘', Alt: '⌥', Control: '⌃', Shift: '⇧', Space: 'Пробел' };
-const pretty = value => value.split('+').map(k => symbols[k] || k).join('');
-const keyChoices = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 'Space',
-  ...Array.from({ length: 20 }, (_, i) => 'F' + (i + 1))];
-for (const value of keyChoices) {
-  const option = document.createElement('option');
-  option.value = value;
-  option.textContent = symbols[value] || value;
-  $('shortcutKey').append(option);
+function pretty(value) {
+  return value.split('+').map(key => {
+    const side = /^(Command|Alt|Control|Shift)(Left|Right)$/.exec(key);
+    return side ? (side[2] === 'Right' ? 'правый ' : 'левый ') + symbols[side[1]] : (symbols[key] || key);
+  }).join(' + ');
+}
+const heldKeys = new Set();
+let captured = '', invalidChord = false;
+function resetChord() {
+  heldKeys.clear();
+  captured = '';
+  invalidChord = false;
+}
+function endCapture() {
+  if (!listening) return;
+  listening = false;
+  resetChord();
+  api.shortcutCapture(false).catch(() => {});
+  shortcutLabels();
 }
 function shortcutLabels(feedback = '') {
   const key = prefs.shortcut ? pretty(prefs.shortcut) : '';
@@ -78,7 +91,7 @@ function shortcutLabels(feedback = '') {
   $('editShortcut').hidden = listening;
   $('shortcutEditor').hidden = !listening;
   $('clearShortcut').hidden = listening || !prefs.shortcutWanted;
-  $('shortcutHelp').textContent = feedback || (listening ? 'Выберите сочетание мышью или нажмите его на клавиатуре, затем нажмите «Применить».'
+  $('shortcutHelp').textContent = feedback || (listening ? 'Зажмите нужные клавиши вместе и отпустите. Можно нажать только правые Option и Shift. Esc — отмена.'
     : key ? 'Действует также из Zoom и браузера.' : prefs.shortcutWanted ? 'Сочетание ' + pretty(prefs.shortcutWanted) + ' недоступно. Выберите другое.' : 'Горячая клавиша выключена.');
 }
 function openSettings() {
@@ -88,56 +101,74 @@ function openSettings() {
 }
 $('settingsButton').onclick = openSettings;
 api.onSettings(openSettings);
+api.onShortcutError(async text => { await refresh(); shortcutLabels(text); status(text); });
 $('closeSettings').onclick = () => $('settingsPanel').close();
 $('settingsPanel').onclose = () => {
-  listening = false;
+  endCapture();
   $('apiKey').value = '';
   shortcutLabels();
 };
-function fillShortcut(keys) {
-  for (const mod of modifiers) $('mod' + mod).checked = keys.includes(mod);
-  $('shortcutKey').value = keys[keys.length - 1];
-}
-$('editShortcut').onclick = () => {
-  fillShortcut((prefs.shortcutWanted || 'Control+Alt+R').split('+'));
+$('editShortcut').onclick = async () => {
+  resetChord();
   listening = true;
   shortcutLabels();
-  $('shortcutKey').focus();
+  $('capturedKeys').textContent = 'Нажмите клавиши…';
+  $('capturedKeys').focus();
+  try { await api.shortcutCapture(true); }
+  catch (e) { endCapture(); shortcutLabels(message(e)); }
 };
-$('cancelShortcut').onclick = () => { listening = false; shortcutLabels(); $('editShortcut').focus(); };
+$('cancelShortcut').onclick = () => { endCapture(); $('editShortcut').focus(); };
+window.onblur = endCapture;
 async function saveShortcut(value) {
+  endCapture();
   controls('settings');
   let feedback;
   try {
     await api.setShortcut(value);
-    listening = false;
     await refresh();
     feedback = value ? '✓ Сочетание сохранено: ' + pretty(value) : 'Горячая клавиша выключена.';
   } catch (e) { feedback = message(e); }
   finally { controls('idle'); shortcutLabels(feedback); }
 }
 $('clearShortcut').onclick = () => saveShortcut('');
-$('applyShortcut').onclick = () => {
-  const mods = modifiers.filter(mod => $('mod' + mod).checked);
-  if (!mods.some(mod => mod !== 'Shift')) {
-    shortcutLabels('Выберите хотя бы один модификатор: Control, Option или Command.');
-    return;
-  }
-  return saveShortcut([...mods, $('shortcutKey').value].join('+'));
-};
-$('shortcutEditor').onkeydown = event => {
-  if (!listening || event.repeat) return;
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    $('cancelShortcut').onclick();
-    return;
-  }
-  if (!(event.ctrlKey || event.altKey || event.metaKey)) return;
-  const key = event.code.replace(/^(Key|Digit)/, '');
-  if (!keyChoices.includes(key)) return;
+$('settingsPanel').onkeydown = event => {
+  if (!listening) return;
+  if (event.key === 'Tab') { endCapture(); return; }
   event.preventDefault();
-  const flags = [event.ctrlKey, event.altKey, event.shiftKey, event.metaKey];
-  fillShortcut([...modifiers.filter((_, i) => flags[i]), key]);
+  if (event.key === 'Escape') { $('cancelShortcut').onclick(); return; }
+  if (event.repeat || heldKeys.has(event.code)) return;
+  heldKeys.add(event.code);
+  const mods = sides.filter(code => heldKeys.has(code));
+  const ordinary = [...heldKeys].filter(code => !sides.includes(code));
+  const key = ordinary[0]?.replace(/^(Key|Digit)/, '');
+  if (ordinary.length) {
+    const generic = [];
+    if (event.ctrlKey) generic.push('Control');
+    if (event.altKey) generic.push('Alt');
+    if (event.shiftKey) generic.push('Shift');
+    if (event.metaKey) generic.push('Command');
+    // Electron registers regular key chords independently of keyboard layout.
+    const valid = ordinary.length === 1 && /^(?:[A-Z0-9]|Space|F(?:[1-9]|1[0-9]|20))$/.test(key)
+      && generic.some(k => k !== 'Shift');
+    if (valid) captured = [...generic, key].join('+');
+    else invalidChord = true;
+  } else {
+    captured = mods.map(code => code.replace('Meta','Command')).join('+');
+  }
+  $('capturedKeys').textContent = invalidChord ? 'Сочетание недоступно' : pretty(captured);
+};
+$('settingsPanel').onkeyup = event => {
+  if (!listening || !heldKeys.has(event.code)) return;
+  event.preventDefault();
+  heldKeys.delete(event.code);
+  if (heldKeys.size) return;
+  if (invalidChord || !captured.includes('+')) {
+    resetChord();
+    $('capturedKeys').textContent = 'Попробуйте ещё раз';
+    shortcutLabels('Нажмите два модификатора вместе либо сочетание с буквой, цифрой, пробелом или F-клавишей.');
+    return;
+  }
+  return saveShortcut(captured);
 };
 $('folder').onclick = () => guarded(async () => { await api.folder(); await refresh(); if (prefs.folder) status('Можно начинать запись.'); });
 $('show').onclick = () => guarded(() => api.showFolder());
@@ -188,17 +219,24 @@ async function setKey(value) {
   $('settingsStatus').textContent = '';
   if (value !== null) apiState('Проверяем подключение к OpenAI…');
   try {
-    if (value === undefined) await api.checkApi();
-    else await api.apiKey(value);
+    await api.apiKey(value);
     $('apiKey').value = '';
     await refresh();
   } catch (e) {
-    apiState((value === undefined ? 'Ошибка проверки. ' : value === null ? 'Не удалось отключить ключ. ' : 'Новый ключ не сохранён. ') + message(e), 'error');
+    apiState((value === '' ? 'Ошибка проверки. ' : value === null ? 'Не удалось отключить ключ. ' : 'Новый ключ не сохранён. ') + message(e), 'error');
   } finally { controls('idle'); }
 }
 $('enableApi').onclick = () => setKey($('apiKey').value);
-$('checkApi').onclick = () => setKey(undefined);
 $('disableApi').onclick = () => setKey(null);
+api.onUpdate(text => { $('updateStatus').textContent = text; });
+$('updateApp').onclick = async () => {
+  if (phase !== 'idle') return;
+  controls('settings');
+  $('updateStatus').textContent = 'Проверяем версию…';
+  try { $('updateStatus').textContent = await api.updateApp(); }
+  catch (e) { $('updateStatus').textContent = message(e); }
+  finally { controls('idle'); }
+};
 api.onProgress((i, n) => status('Расшифровка в OpenAI · часть ' + i + ' из ' + n));
 $('reveal').onclick = () => guarded(() => api.revealPart(reviewing.id));
 $('chat').onclick = () => guarded(() => api.openChat());

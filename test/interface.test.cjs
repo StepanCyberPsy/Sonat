@@ -42,7 +42,7 @@ async function studio(mode, { systemAllowed = true, automatic = false, start = t
     } };
   }
   const api = {
-    info: async () => ({ folder:'/test', pending:[], automatic, shortcut: 'Control+Alt+R', shortcutWanted: 'Control+Alt+R' }), onProgress() {}, onSettings() {},
+    info: async () => ({ folder:'/test', pending:[], automatic, shortcut: 'Control+Alt+R', shortcutWanted: 'Control+Alt+R' }), onProgress() {}, onSettings() {}, onUpdate() {}, onShortcutError(){}, shortcutCapture: async () => {},
     start: async value => { calls.push('start-' + value); return 'id'; },
     samples: async (_,bytes) => { assert.equal(bytes.byteLength,4); calls.push('write'); },
     stop: async () => calls.push('stop'), nextPart: async () => { calls.push('prepare'); return { name:'part-000001.wav', index:1, total:1 }; },
@@ -105,14 +105,16 @@ test('saved legacy key, live progress, success and failed replacement are distin
   let apiCheck = null, finish;
   const s = await studio('mic', { start: false, overrides: {
     info: async () => ({ automatic: true, pending: [], apiCheck }),
-    checkApi: () => new Promise(resolve => { finish = () => { apiCheck = {ok:true, time:Date.now()}; resolve(); }; }),
-    apiKey: async () => { throw new Error('Проверьте ключ API.'); }
+    apiKey: async value => {
+      if (value) throw new Error('Проверьте ключ API.');
+      await new Promise(resolve => { finish = () => { apiCheck = {ok:true, time:Date.now()}; resolve(); }; });
+    }
   }});
   const el = s.element;
   assert.match(el('apiState').textContent, /ещё не проверено/);
-  const pending = el('checkApi').onclick();
+  const pending = el('enableApi').onclick();
   assert.match(el('apiState').textContent, /Проверяем/);
-  assert.ok(el('checkApi').disabled);
+  assert.ok(el('enableApi').disabled);
   finish();
   await pending;
   assert.match(el('apiState').textContent, /✓ API подключён/);
@@ -121,20 +123,35 @@ test('saved legacy key, live progress, success and failed replacement are distin
   assert.match(el('apiState').textContent, /Новый ключ не сохранён.*Проверьте ключ/);
 });
 
-test('shortcut editor supports mouse entry after a conflict and physical keys on Russian layout', async () => {
-  let value = 'Control+Alt+R';
+test('direct capture commits right Option + right Shift once, after release, in either order', async () => {
+  const values = [];
   const s = await studio('mic', { start: false, overrides: {
-    info: async () => ({ pending: [], shortcut: value, shortcutWanted: value }),
-    setShortcut: async next => { if (next === 'Control+Alt+Space') throw Error('Это сочетание занято.'); value = next; }
+    info: async () => ({ pending: [], shortcut: values.at(-1), shortcutWanted: values.at(-1) }),
+    setShortcut: async value => values.push(value)
   }});
   const el = s.element;
-  el('editShortcut').onclick();
-  el('shortcutKey').value = 'Space';
-  await el('applyShortcut').onclick();
-  assert.equal(el('shortcutEditor').hidden, false);
-  assert.match(el('shortcutHelp').textContent, /занято/);
-  el('shortcutEditor').onkeydown({code:'KeyK', key:'л', ctrlKey:true, altKey:true, preventDefault(){}});
-  await el('applyShortcut').onclick();
-  assert.equal(value, 'Control+Alt+K');
-  assert.equal(el('keyHint').textContent, '⌃⌥K');
+  const panel = el('settingsPanel');
+  const event = code => ({code, preventDefault(){}});
+  for (const pair of [['ShiftRight','AltRight'], ['AltRight','ShiftRight']]) {
+    const count = values.length;
+    await el('editShortcut').onclick();
+    pair.forEach(k => panel.onkeydown(event(k)));
+    panel.onkeydown({...event(pair[1]), repeat:true});
+    panel.onkeyup(event(pair[0]));
+    assert.equal(values.length, count);
+    await panel.onkeyup(event(pair[1]));
+    assert.equal(values.length, count + 1);
+    assert.equal(values.at(-1), 'AltRight+ShiftRight');
+  }
+  await el('editShortcut').onclick();
+  panel.onkeydown(event('ShiftLeft'));
+  panel.onkeydown({...event('Escape'),key:'Escape'});
+  await panel.onkeyup(event('ShiftLeft'));
+  assert.equal(values.length, 2);
+  await el('editShortcut').onclick();
+  panel.onkeydown(event('AltLeft'));
+  panel.onkeydown({...event('KeyK'), key:'л', altKey:true});
+  panel.onkeyup(event('KeyK'));
+  await panel.onkeyup(event('AltLeft'));
+  assert.equal(values.at(-1), 'Alt+K');
 });

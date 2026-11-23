@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Check the macOS modifier monitor
+        run: node test/macos-modifiers.cjs
       - name: Install using the downloaded distribution
         run: './Установить\ Sonat.command --no-open'
       - name: Verify installed app and open the recording window

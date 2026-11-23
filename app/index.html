@@ -23,13 +23,11 @@
 <dialog id="settingsPanel" aria-labelledby="settingsTitle"><div class="sectionHead"><h2 id="settingsTitle">Настройки</h2><button id="closeSettings">Готово</button></div>
 <section><h3>Горячая клавиша записи</h3><p>Одно сочетание запускает и останавливает запись, пока Sonat открыт.</p>
 <div class="row"><button id="editShortcut" aria-describedby="shortcutHelp">Назначить сочетание</button><button id="clearShortcut">Отключить</button></div>
-<fieldset id="shortcutEditor" hidden><legend>Новое сочетание</legend>
-<div class="row" id="modifiers"><label><input type="checkbox" id="modControl"> ⌃ Control</label><label><input type="checkbox" id="modAlt"> ⌥ Option</label><label><input type="checkbox" id="modShift"> ⇧ Shift</label><label><input type="checkbox" id="modCommand"> ⌘ Command</label></div>
-<label for="shortcutKey">Клавиша</label><select id="shortcutKey"></select>
-<div class="row"><button id="applyShortcut">Применить</button><button id="cancelShortcut">Отмена</button></div></fieldset>
+<div class="row" id="shortcutEditor" hidden><kbd id="capturedKeys" tabindex="-1">Нажмите клавиши…</kbd><button id="cancelShortcut">Отмена</button></div>
 <p class="muted" id="shortcutHelp" role="status"></p></section>
 <section><h3>Авторасшифровка</h3><p id="apiState" role="status"></p>
 <label for="apiKey">Ключ OpenAI API</label><input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Ключ проекта">
-<div class="row"><button id="enableApi">Проверить и сохранить</button><button id="checkApi" hidden>Проверить подключение</button><button id="disableApi" hidden>Отключить и забыть ключ</button></div>
-<p class="muted">Для проверки Sonat отправляет в OpenAI короткую встроенную тестовую фразу. Проверка и расшифровка записей расходуют кредиты API.</p><p id="settingsStatus" role="status"></p></section></dialog>
+<div class="row"><button id="enableApi">Проверить и сохранить</button><button id="disableApi" hidden>Отключить и забыть ключ</button></div>
+<p class="muted">Для проверки Sonat отправляет в OpenAI короткую встроенную тестовую фразу. Проверка и расшифровка записей расходуют кредиты API.</p><p id="settingsStatus" role="status"></p></section>
+<section><h3>Обновления</h3><div class="row"><span id="appVersion"></span><button id="updateApp">Обновить Sonat</button></div><p class="muted" id="updateStatus" role="status"></p></section></dialog>
 <script src="renderer.js"></script></body></html>

@@ -14,8 +14,8 @@ if (( major < 14 || (major == 14 && minor < 2) )); then
 fi
 target_dir="$HOME/Applications"
 target="$target_dir/Sonat.app"
-if [[ -d "$target" && "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$target/Contents/Info.plist" 2>/dev/null || true)" != "0.3.2" ]]; then
-  target="$target_dir/Sonat 0.3.2.app"
+if [[ -d "$target" && "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$target/Contents/Info.plist" 2>/dev/null || true)" != "0.4.0" ]]; then
+  target="$target_dir/Sonat 0.4.0.app"
 fi
 if [[ -e "$target" ]]; then
   echo "Sonat уже находится в $target"
@@ -39,8 +39,8 @@ set_string() {
 set_string CFBundleIdentifier com.stepancyberpsy.sonat
 set_string CFBundleName Sonat
 set_string CFBundleDisplayName Sonat
-set_string CFBundleShortVersionString 0.3.2
-set_string CFBundleVersion 0.3.2
+set_string CFBundleShortVersionString 0.4.0
+set_string CFBundleVersion 0.4.0
 set_string CFBundleIconFile Sonat.icns
 if /usr/bin/plutil -extract CFBundleIconName raw -o - "$plist" >/dev/null 2>&1; then
   /usr/bin/plutil -remove CFBundleIconName "$plist"

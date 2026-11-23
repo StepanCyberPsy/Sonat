@@ -13,18 +13,20 @@ async function main() {
       expression: `(async () => {
         const byId = id => document.getElementById(id);
         byId('settingsButton').click();
-        byId('editShortcut').click();
-        byId('shortcutKey').value = 'K';
-        byId('modControl').checked = true;
-        byId('modAlt').checked = true;
-        byId('modShift').checked = true;
-        await byId('applyShortcut').onclick();
+        await byId('editShortcut').onclick();
+        const panel = byId('settingsPanel');
+        const send = (code, down) => panel.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup',
+          {code, key: code.startsWith('Alt') ? 'Alt' : 'Shift', location: 2, bubbles: true, cancelable: true}));
+        send('AltRight',true); send('ShiftRight',true); send('ShiftRight',false); send('AltRight',false);
+        for (let i = 0; i < 100 && !byId('shortcutHelp').textContent.startsWith('✓'); i++) {
+          await new Promise(resolve => setTimeout(resolve,100));
+        }
         return [byId('keyHint').textContent, byId('shortcutHelp').textContent];
       })()` } }));
     const answer = await response;
-    assert.deepEqual(answer.result?.result?.value, ['⌃⌥⇧K', '✓ Сочетание сохранено: ⌃⌥⇧K']);
+    assert.deepEqual(answer.result?.result?.value, ['правый ⌥ + правый ⇧', '✓ Сочетание сохранено: правый ⌥ + правый ⇧']);
     const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
-    assert.equal(settings.shortcut, 'Control+Alt+Shift+K');
+    assert.equal(settings.shortcut, 'AltRight+ShiftRight');
   } finally { socket.close(); }
 }
 if (process.argv[2]) main().catch(e => { console.error(e); process.exitCode = 1; });
