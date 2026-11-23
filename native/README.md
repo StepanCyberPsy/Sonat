@@ -13,7 +13,13 @@ xcrun clang -fobjc-arc -O2 -Wall -Wextra -mmacosx-version-min=14.2 \
 /tmp/SonatCallProbe --once
 ```
 
-Упаковщик кладёт бинарник в `Sonat.app/Contents/Helpers/SonatCallProbe`. Здесь нет готового бинарника. На Linux сборка и проверка macOS API недоступны; компиляцию, TCC и реальные звонки необходимо проверить на Mac.
+Готовая сборка содержит `Sonat.app/Contents/Helpers/SonatCallProbe`. При выпуске на Apple Silicon и Intel команда ниже проверяет экземпляр из пакета приложения. Она запускает встроенные тесты, читает один снимок состояния и получает два последовательных сообщения от монитора.
+
+```sh
+node scripts/smoke-call-probe.cjs "$HOME/Applications/Sonat.app"
+```
+
+Разрешения macOS и распознавание конкретного звонка проверяются вручную по шагам ниже. [Сценарий проверки](../scripts/smoke-call-probe.cjs) · [Проверки релиза 0.5.2](https://github.com/StepanCyberPsy/Sonat/actions/runs/45218428029)
 
 ## Контракт
 
