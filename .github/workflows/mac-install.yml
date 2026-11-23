@@ -4,6 +4,8 @@ on:
     branches: [main]
     paths:
       - 'Установить Sonat.command'
+      - 'app/sonat.png'
+      - 'test/macos-icon.swift'
       - '.github/workflows/mac-install.yml'
 permissions:
   contents: read
@@ -24,6 +26,10 @@ jobs:
           bundle="$HOME/Applications/Sonat.app"
           codesign --verify --deep --strict --verbose=2 "$bundle"
           test "$(plutil -extract CFBundleIdentifier raw -o - "$bundle/Contents/Info.plist")" = com.stepancyberpsy.sonat
+          test "$(plutil -extract CFBundleIconFile raw -o - "$bundle/Contents/Info.plist")" = Sonat.icns
+          iconutil -c iconset "$bundle/Contents/Resources/Sonat.icns" -o "$RUNNER_TEMP/Sonat.iconset"
+          test -s "$RUNNER_TEMP/Sonat.iconset/icon_512x512@2x.png"
+          swift test/macos-icon.swift "$bundle" app/sonat.png
           profile="$(mktemp -d)"
           "$bundle/Contents/MacOS/Electron" --user-data-dir="$profile" --remote-debugging-address=127.0.0.1 --remote-debugging-port=0 > "$RUNNER_TEMP/sonat.log" 2>&1 &
           pid=$!

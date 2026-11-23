@@ -14,8 +14,8 @@ if (( major < 14 || (major == 14 && minor < 2) )); then
 fi
 target_dir="$HOME/Applications"
 target="$target_dir/Sonat.app"
-if [[ -d "$target" && "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$target/Contents/Info.plist" 2>/dev/null || true)" != "0.3.0" ]]; then
-  target="$target_dir/Sonat 0.3.app"
+if [[ -d "$target" && "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$target/Contents/Info.plist" 2>/dev/null || true)" != "0.3.1" ]]; then
+  target="$target_dir/Sonat 0.3.1.app"
 fi
 if [[ -e "$target" ]]; then
   echo "Sonat уже находится в $target"
@@ -39,7 +39,20 @@ set_string() {
 set_string CFBundleIdentifier com.stepancyberpsy.sonat
 set_string CFBundleName Sonat
 set_string CFBundleDisplayName Sonat
-set_string CFBundleShortVersionString 0.3.0
+set_string CFBundleShortVersionString 0.3.1
+set_string CFBundleVersion 0.3.1
+set_string CFBundleIconFile Sonat.icns
+if /usr/bin/plutil -extract CFBundleIconName raw -o - "$plist" >/dev/null 2>&1; then
+  /usr/bin/plutil -remove CFBundleIconName "$plist"
+fi
+iconset="$stage/Sonat.iconset"
+mkdir -p "$iconset"
+for size in 16 32 128 256 512; do
+  /usr/bin/sips -z "$size" "$size" "$source_dir/app/sonat.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+  retina=$((size * 2))
+  /usr/bin/sips -z "$retina" "$retina" "$source_dir/app/sonat.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+done
+/usr/bin/iconutil -c icns "$iconset" -o "$bundle/Contents/Resources/Sonat.icns"
 set_string NSMicrophoneUsageDescription 'Sonat записывает ваш голос для диктофона и звонков.'
 set_string NSAudioCaptureUsageDescription 'Sonat записывает голоса собеседников из системного звука.'
 set_string NSScreenCaptureUsageDescription 'Sonat получает звук звонка через системный захват.'

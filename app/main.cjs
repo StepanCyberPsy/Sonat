@@ -150,7 +150,7 @@ async function setup() {
   handle('open-chat', () => shell.openExternal('https://chatgpt.com/'));
   handle('copy-prompt', () => clipboard.writeText('Расшифруй прикреплённую аудиозапись дословно на языке разговора. Разделяй реплики абзацами. Неразборчивые места отмечай [неразборчиво]. Верни только расшифровку.'));
 
-  const assets = new Set(['/index.html', '/style.css', '/renderer.js', '/worklet.js']);
+  const assets = new Set(['/index.html', '/style.css', '/renderer.js', '/worklet.js', '/sonat.png']);
   protocol.handle('sonat', request => {
     const url = new URL(request.url);
     if (url.hostname !== 'studio' || !assets.has(url.pathname)) return new Response(null, { status: 404 });
