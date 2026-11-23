@@ -18,7 +18,7 @@ function network(metadata = release(), bytes = archive) {
   };
 }
 async function fixture(t, options = {}) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'sonat-update-test-'));
+  const directory = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sonat-update-test-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const target = path.join(directory, 'Sonat.app');
   const executable = path.join(target, 'Contents/MacOS/Electron');

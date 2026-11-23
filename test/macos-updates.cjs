@@ -10,7 +10,7 @@ const { version } = require('../package.json');
 (async () => {
   if (process.env.SONAT_TEST_REAL_UPDATE !== '1') return;
   if (process.platform !== 'darwin') throw Error('macOS required');
-  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'sonat-real-update-'));
+  const temporary = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sonat-real-update-'));
   let processHandle;
   try {
     const bundle = path.join(temporary, 'Sonat.app');

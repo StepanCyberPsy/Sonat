@@ -2,9 +2,6 @@ name: Sonat release
 on:
   push:
     branches: [main]
-    paths:
-      - package.json
-      - .github/workflows/release.yml
   workflow_dispatch:
 permissions:
   contents: read
