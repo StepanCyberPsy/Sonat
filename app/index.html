@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sonat</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+<header><h1>Sonat</h1></header>
+<section class="recorder">
+<fieldset id="modes"><legend>Режим записи</legend><label><input type="radio" name="mode" value="call" checked> Звонок</label><label><input type="radio" name="mode" value="mic"> Диктофон</label></fieldset>
+<output id="time" aria-label="Длительность">00:00</output>
+<div class="meters"><label>Микрофон <meter id="mic" min="0" max="1" value="0"></meter></label><label id="systemLabel">Звук компьютера <meter id="system" min="0" max="1" value="0"></meter></label></div>
+<button id="record" class="primary">Начать запись</button>
+<p id="status" role="status">Выберите папку для расшифровок.</p>
+</section>
+<section><h2>Сохранение</h2>
+<div class="row"><div id="path">Папка ещё не выбрана</div><button id="folder">Выбрать папку</button><button id="show" hidden>Открыть</button></div>
+</section>
+<section id="review" hidden><h2 id="partTitle">Расшифровка в ChatGPT</h2>
+<p id="partInfo"></p>
+<p>Прикрепите выделенный WAV в обычном чате ChatGPT, отправьте запрос и скопируйте ответ сюда.</p>
+<div class="row"><button id="reveal">Показать WAV в Finder</button><button id="chat">Открыть ChatGPT</button><button id="prompt">Скопировать запрос</button></div>
+<label for="answer">Текст этой части</label><textarea id="answer" rows="5"></textarea>
+<button id="accept">Сохранить часть</button><button id="later">Продолжить позже</button></section>
+<section id="queue" hidden><h2>Ожидают расшифровки</h2><ul id="list"></ul></section>
+</main><script src="renderer.js"></script></body></html>
