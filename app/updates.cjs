@@ -1,5 +1,6 @@
 // Main-process only. The renderer supplies no URL, command, version or path.
-const fs = require('node:fs/promises');
+// Inspect and remove the physical bundle, including any .asar archives as files.
+const fs = (process.versions.electron ? require('original-fs') : require('node:fs')).promises;
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { execFile } = require('node:child_process');
@@ -132,7 +133,11 @@ class Updater {
       const backup = path.join(backupDir, 'previous.app');
       let candidate = false;
       let installed = false;
-      let stageCleaned = false;
+      const cleanup = { recursive: true, force: true, maxRetries: 4, retryDelay: 150 };
+      async function discard(directory) {
+        try { await fs.rm(directory, cleanup); }
+        catch (error) { console.warn('Не удалось очистить временную папку обновления:', error.message); }
+      }
       try {
         const archive = path.join(stage, 'release.zip');
         const result = await response(release.url, this.fetch, AbortSignal.timeout(10 * 60 * 1000), 'application/octet-stream');
@@ -171,7 +176,7 @@ class Updater {
           if (previous.repository !== REPO || previous.target !== target || previous.format !== 1 || (await fs.lstat(backupDir)).isSymbolicLink()) throw new Error('Неизвестная резервная копия: требуется проверка владельца.');
           const entries = await fs.readdir(backupDir);
           if (entries.some(name => !['owner.json', 'previous.app'].includes(name))) throw new Error('В резервной копии есть посторонние файлы.');
-          await fs.rm(backupDir, { recursive: true });
+          await fs.rm(backupDir, cleanup);
         } catch (error) { if (error.code !== 'ENOENT') throw error; }
         await fs.mkdir(backupDir);
         candidate = true;
@@ -181,8 +186,7 @@ class Updater {
         await this.run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', SWAP_SCRIPT, target, backup], { timeout: 30000 });
         installed = true;
         candidate = false;
-        await fs.rm(stage, { recursive: true, force: true });
-        stageCleaned = true;
+        await discard(stage);
         this.state.state = 'restarting';
         this.app.relaunch({ execPath: path.join(target, 'Contents/MacOS/Electron'), args: [] });
         this.app.quit();
@@ -191,8 +195,8 @@ class Updater {
         if (installed) throw new Error(`Обновление установлено в ${target}. Откройте его через Finder: ${error.message}`);
         throw error;
       } finally {
-        if (candidate && !installed) await fs.rm(backupDir, { recursive: true, force: true });
-        if (!stageCleaned) await fs.rm(stage, { recursive: true, force: true });
+        if (candidate && !installed) await discard(backupDir);
+        if (!installed) await discard(stage);
       }
     });
   }

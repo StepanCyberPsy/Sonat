@@ -109,3 +109,19 @@ test('successive updates keep only one owned previous bundle', async t => {
   assert.equal(backups.length, 1);
   assert.equal(await fs.readFile(path.join(f.directory, backups[0], 'previous.app/Contents/MacOS/Electron'), 'utf8'), 'new binary');
 });
+
+test('cleanup failure preserves the original verification error and installed app', async t => {
+  const f = await fixture(t, { badSignature: true });
+  const realRemove = fs.rm;
+  const mock = t.mock.method(fs, 'rm', async (directory, options) => {
+    if (path.basename(directory).startsWith('.sonat-update-')) {
+      throw Object.assign(new Error('directory not empty'), { code: 'ENOTEMPTY' });
+    }
+    return realRemove(directory, options);
+  });
+  try {
+    await f.updater.check();
+    await assert.rejects(f.updater.install(), /Invalid signature/);
+    assert.equal(await fs.readFile(f.executable, 'utf8'), 'previous binary');
+  } finally { mock.mock.restore(); }
+});

@@ -4,8 +4,6 @@ const path = require('node:path');
 const os = require('node:os');
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
-const { createHash } = require('node:crypto');
-const { Updater } = require('../app/updates.cjs');
 const { version } = require('../package.json');
 (async () => {
   if (process.env.SONAT_TEST_REAL_UPDATE !== '1') return;
@@ -19,20 +17,19 @@ const { version } = require('../package.json');
     const profile = path.join(temporary, 'profile');
     await fs.mkdir(profile);
     await fs.writeFile(path.join(profile, 'settings.json'), '{}\n');
-    const archive = await fs.readFile(`dist/Sonat-${version}-darwin-${process.arch}.zip`);
-    const digest = 'sha256:' + createHash('sha256').update(archive).digest('hex');
-    let relaunch;
-    const updater = new Updater({
-      app: { getVersion: () => '0.0.0', getPath: () => executable, relaunch: args => { relaunch = args; }, quit: () => {} },
-      fetch: async url => {
-        if (url.endsWith('/releases/latest')) return Response.json({ tag_name: `v${version}`, assets: [{ name: `Sonat-${version}-darwin-${process.arch}.zip`, size: archive.length, digest, browser_download_url: `https://github.com/StepanCyberPsy/Sonat/releases/download/v${version}/Sonat-${version}-darwin-${process.arch}.zip` }] });
-        if (url.includes('/commits/')) return Response.json({ sha: process.env.GITHUB_SHA });
-        return new Response(archive);
-      }
+    // Run the installer in a packaged Electron main process, where Node's fs is patched.
+    const entry = path.join(bundle, 'Contents/Resources/app/app/main.cjs');
+    await fs.copyFile('scripts/macos-update-driver.cjs', entry);
+    execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'com.stepancyberpsy.sonat', bundle]);
+    const backup = path.join(temporary, '.Sonat.app.sonat-backup');
+    const legacyResources = path.join(backup, 'previous.app/Contents/Resources');
+    await fs.mkdir(legacyResources, { recursive: true });
+    await fs.writeFile(path.join(legacyResources, 'default_app.asar'), 'legacy archive fixture');
+    await fs.writeFile(path.join(backup, 'owner.json'), JSON.stringify({ format: 1, repository: 'StepanCyberPsy/Sonat', target: bundle }));
+    execFileSync(executable, [`--user-data-dir=${profile}`], {
+      stdio: 'inherit', timeout: 180000,
+      env: { ...process.env, SONAT_TEST_ARCHIVE: path.resolve(`dist/Sonat-${version}-darwin-${process.arch}.zip`) }
     });
-    await updater.check();
-    await updater.install();
-    assert.equal(relaunch.execPath, executable, 'Dock/Finder bundle path preserved');
     assert.equal(await fs.readFile(path.join(profile, 'settings.json'), 'utf8'), '{}\n');
     assert.equal((await fs.readdir(temporary)).filter(name => name.endsWith('.sonat-backup')).length, 1);
     assert.equal((await fs.readdir(temporary)).some(name => name.startsWith('.sonat-update-')), false);
