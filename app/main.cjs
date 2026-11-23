@@ -4,7 +4,7 @@ const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { Recording, pending, nextPart, savePart, sessionDir, saveJSON } = require('./recordings.cjs');
 
-const { transcribe } = require('./transcription.cjs');
+const { transcribe, checkConnection } = require('./transcription.cjs');
 
 const { RecordShortcut } = require('./shortcuts.cjs');
 
@@ -91,7 +91,7 @@ async function setup() {
     key => configure({ shortcut: key }))));
   handle('info', async () => ({
     shortcut: shortcut.active, shortcutWanted: shortcut.requested,
-    folder: settings.folder || '', automatic: Boolean(settings.apiKey),
+    folder: settings.folder || '', automatic: Boolean(settings.apiKey), apiCheck: settings.apiCheck || null,
     pending: settings.folder ? await pending(settings.folder) : []
   }));
   handle('folder', () => exclusive('folder', async () => {
@@ -127,16 +127,32 @@ async function setup() {
     if (active?.id !== id || operation) throw new Error('Запись уже остановлена.');
     return finish();
   });
+  async function savedKey() {
+    if (!settings.apiKey) throw new Error('Добавьте ключ API.');
+    const { result } = await safeStorage.decryptStringAsync(Buffer.from(settings.apiKey, 'base64'));
+    return result;
+  }
+  handle('check-api', () => exclusive('settings', async () => {
+    const key = await savedKey();
+    let result;
+    try {
+      await checkConnection(key);
+      result = { ok: true };
+    } catch (e) {
+      result = { ok: false, message: e.message };
+    }
+    await configure({ apiCheck: { ...result, time: Date.now() } });
+  }));
   handle('api-key', value => exclusive('settings', async () => {
-    if (value === null) return configure({ apiKey: null });
+    if (value === null) return configure({ apiKey: null, apiCheck: null });
     if (typeof value !== 'string' || !value.trim()) throw new Error('Введите ключ проекта OpenAI.');
     if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('Системное шифрование ключа недоступно.');
     const encrypted = await safeStorage.encryptStringAsync(value.trim());
-    await configure({ apiKey: encrypted.toString('base64') });
+    await checkConnection(value.trim());
+    await configure({ apiKey: encrypted.toString('base64'), apiCheck: { ok: true, time: Date.now() } });
   }));
   handle('transcribe', id => exclusive('transcribe', async () => {
-    if (!settings.apiKey) throw new Error('Добавьте ключ API.');
-    const { result: key } = await safeStorage.decryptStringAsync(Buffer.from(settings.apiKey, 'base64'));
+    const key = await savedKey();
     return transcribe(settings.folder, id, key, (i, n) => {
       if (!win.isDestroyed()) win.webContents.send('progress', i, n);
     });

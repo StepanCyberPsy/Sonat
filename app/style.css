@@ -43,3 +43,10 @@ dialog .row { margin: 10px 0; } label[for] { display: block; margin-top: 10px; f
 input[type=password], textarea { width: 100%; background: var(--btn); border: 1px solid var(--line); border-radius: 8px; padding: 9px; margin: 4px 0; }
 textarea { resize: vertical; } [hidden] { display: none !important; }
 @media (prefers-color-scheme: dark) { :root { --bg: #17211f; --paper: #202c29; --ink: #eff4ee; --muted: #bdc9c0; --line: #475950; --btn: #2b3833; --accent: #b3e1c4; --button-text: #162c27; } .console { background: #0c1a17; } }
+
+#shortcutEditor { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+#shortcutKey { font: inherit; color: inherit; background: var(--btn); border: 1px solid var(--line); padding: 5px 8px; border-radius: 6px; }
+#apiState.success, #apiState.error { padding: 8px 12px; border-inline-start: 3px solid currentColor; }
+#apiState.success { color: var(--accent); }
+#apiState.error { color: #9c3526; }
+@media (prefers-color-scheme: dark) { #apiState.error { color: #ffa696; } }

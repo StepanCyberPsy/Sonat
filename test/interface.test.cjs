@@ -5,12 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const renderer = fs.readFileSync(path.join(__dirname,'../app/renderer.js'),'utf8');
 
-async function studio(mode, { systemAllowed = true, automatic = false } = {}) {
+async function studio(mode, { systemAllowed = true, automatic = false, start = true, overrides = {} } = {}) {
   const elements = new Map();
   const calls = [];
   const streams = [];
   function element(id) {
-    if (!elements.has(id)) elements.set(id, { value: '', getContext: () => ({clearRect(){},fillRect(){}}), showModal(){this.open=true;}, close(){this.open=false;this.onclose?.();}, classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
+    if (!elements.has(id)) elements.set(id, { value: '', focus() {}, getContext: () => ({clearRect(){},fillRect(){}}), showModal(){this.open=true;}, close(){this.open=false;this.onclose?.();}, classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
     return elements.get(id);
   }
   function source(kind) {
@@ -49,6 +49,7 @@ async function studio(mode, { systemAllowed = true, automatic = false } = {}) {
     transcribe: async () => { calls.push('transcribe'); return { file:'auto.txt' }; },
     savePart: async (_id, _name, value) => { assert.equal(value, 'Мой текст'); calls.push('save'); return { file:'file.txt' }; }
   };
+  Object.assign(api, overrides);
   const devices = {
     async getDisplayMedia() {
       calls.push('display');
@@ -62,7 +63,7 @@ async function studio(mode, { systemAllowed = true, automatic = false } = {}) {
     MediaStream:class { constructor(tracks) { this.tracks = tracks; } }, AudioWorkletNode:Worklet,
     setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array });
   await new Promise(resolve => setImmediate(resolve));
-  await element('record').onclick();
+  if (start) await element('record').onclick();
   return { calls, streams, element };
 }
 
@@ -98,4 +99,42 @@ test('opted-in dictaphone submits only after stop and shows finished TXT', async
   await s.element('record').onclick();
   assert.deepEqual(s.calls, ['input','microphone','start-mic','write','stop','transcribe']);
   assert.match(s.element('status').textContent, /auto.txt/);
+});
+
+test('saved legacy key, live progress, success and failed replacement are distinguishable', async () => {
+  let apiCheck = null, finish;
+  const s = await studio('mic', { start: false, overrides: {
+    info: async () => ({ automatic: true, pending: [], apiCheck }),
+    checkApi: () => new Promise(resolve => { finish = () => { apiCheck = {ok:true, time:Date.now()}; resolve(); }; }),
+    apiKey: async () => { throw new Error('Проверьте ключ API.'); }
+  }});
+  const el = s.element;
+  assert.match(el('apiState').textContent, /ещё не проверено/);
+  const pending = el('checkApi').onclick();
+  assert.match(el('apiState').textContent, /Проверяем/);
+  assert.ok(el('checkApi').disabled);
+  finish();
+  await pending;
+  assert.match(el('apiState').textContent, /✓ API подключён/);
+  el('apiKey').value = 'invalid';
+  await el('enableApi').onclick();
+  assert.match(el('apiState').textContent, /Новый ключ не сохранён.*Проверьте ключ/);
+});
+
+test('shortcut editor supports mouse entry after a conflict and physical keys on Russian layout', async () => {
+  let value = 'Control+Alt+R';
+  const s = await studio('mic', { start: false, overrides: {
+    info: async () => ({ pending: [], shortcut: value, shortcutWanted: value }),
+    setShortcut: async next => { if (next === 'Control+Alt+Space') throw Error('Это сочетание занято.'); value = next; }
+  }});
+  const el = s.element;
+  el('editShortcut').onclick();
+  el('shortcutKey').value = 'Space';
+  await el('applyShortcut').onclick();
+  assert.equal(el('shortcutEditor').hidden, false);
+  assert.match(el('shortcutHelp').textContent, /занято/);
+  el('shortcutEditor').onkeydown({code:'KeyK', key:'л', ctrlKey:true, altKey:true, preventDefault(){}});
+  await el('applyShortcut').onclick();
+  assert.equal(value, 'Control+Alt+K');
+  assert.equal(el('keyHint').textContent, '⌃⌥K');
 });

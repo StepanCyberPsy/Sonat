@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('sonat', {
   start: mode => ipcRenderer.invoke('start', mode),
   samples: (id, samples) => ipcRenderer.invoke('samples', id, samples),
   stop: id => ipcRenderer.invoke('stop', id),
+  checkApi: () => ipcRenderer.invoke('check-api'),
   apiKey: value => ipcRenderer.invoke('api-key', value),
   transcribe: id => ipcRenderer.invoke('transcribe', id),
   onProgress: fn => ipcRenderer.on('progress', (_, i, n) => fn(i, n)),

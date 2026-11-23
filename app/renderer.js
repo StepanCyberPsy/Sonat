@@ -26,7 +26,7 @@ function controls(next) {
   $('record').disabled = !(idle || phase === 'recording' || phase === 'review');
   $('record').textContent = phase === 'recording' ? 'Остановить запись' : 'Начать запись';
   $('record').classList.toggle('recording', phase === 'recording');
-  for (const id of ['modes','folder','apiKey','enableApi','disableApi','editShortcut','clearShortcut']) $(id).disabled = !idle;
+  for (const id of ['modes','folder','apiKey','enableApi','disableApi','checkApi','editShortcut','clearShortcut','shortcutEditor']) $(id).disabled = !idle;
   for (const b of $('list').querySelectorAll('button')) b.disabled = !idle;
 }
 async function refresh() {
@@ -35,8 +35,8 @@ async function refresh() {
   $('show').hidden = !prefs.folder;
   $('storageHint').textContent = prefs.folder ? 'Тексты — в этой папке. WAV — в подпапке «Аудио Sonat».' : 'Выберите место на Mac для текстов и аудио.';
   shortcutLabels();
-  $('disableApi').hidden = !prefs.automatic;
-  $('apiState').textContent = prefs.automatic ? 'Включена. Текст сохранится автоматически.' : 'Выключена. Доступна ручная расшифровка в чате.';
+  $('disableApi').hidden = $('checkApi').hidden = !prefs.automatic;
+  showApiState();
   $('list').replaceChildren();
   for (const id of prefs.pending) {
     const li = document.createElement('li');
@@ -60,15 +60,26 @@ $('modes').onchange = () => {
   $('sourceHint').textContent = mic ? 'Только микрофон' : 'Микрофон + компьютер';
 };
 let listening = false;
-function shortcutLabels() {
-  const symbols = { Command: '⌘', Alt: '⌥', Control: '⌃', Shift: '⇧' };
-  const pretty = value => value.split('+').map(k => symbols[k] || k).join('');
+const modifiers = ['Control', 'Alt', 'Shift', 'Command'];
+const symbols = { Command: '⌘', Alt: '⌥', Control: '⌃', Shift: '⇧', Space: 'Пробел' };
+const pretty = value => value.split('+').map(k => symbols[k] || k).join('');
+const keyChoices = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 'Space',
+  ...Array.from({ length: 20 }, (_, i) => 'F' + (i + 1))];
+for (const value of keyChoices) {
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = symbols[value] || value;
+  $('shortcutKey').append(option);
+}
+function shortcutLabels(feedback = '') {
   const key = prefs.shortcut ? pretty(prefs.shortcut) : '';
   $('keyHint').textContent = key;
-  $('editShortcut').textContent = listening ? 'Нажмите сочетание…' : key ? 'Изменить ' + key : 'Назначить сочетание';
-  $('clearShortcut').hidden = !prefs.shortcutWanted;
-  $('shortcutHelp').textContent = listening ? 'Удерживайте ⌘, ⌥ или ⌃ и нажмите букву или цифру. Esc — отмена.'
-    : key ? 'Действует также из Zoom и браузера.' : prefs.shortcutWanted ? 'Сочетание ' + pretty(prefs.shortcutWanted) + ' недоступно. Выберите другое.' : 'Горячая клавиша выключена.';
+  $('editShortcut').textContent = key ? 'Изменить ' + key : 'Назначить сочетание';
+  $('editShortcut').hidden = listening;
+  $('shortcutEditor').hidden = !listening;
+  $('clearShortcut').hidden = listening || !prefs.shortcutWanted;
+  $('shortcutHelp').textContent = feedback || (listening ? 'Выберите сочетание мышью или нажмите его на клавиатуре, затем нажмите «Применить».'
+    : key ? 'Действует также из Zoom и браузера.' : prefs.shortcutWanted ? 'Сочетание ' + pretty(prefs.shortcutWanted) + ' недоступно. Выберите другое.' : 'Горячая клавиша выключена.');
 }
 function openSettings() {
   if ($('settingsPanel').open) return;
@@ -83,33 +94,50 @@ $('settingsPanel').onclose = () => {
   $('apiKey').value = '';
   shortcutLabels();
 };
-$('editShortcut').onclick = () => { listening = !listening; shortcutLabels(); };
-$('editShortcut').onblur = () => { if (listening) { listening = false; shortcutLabels(); } };
+function fillShortcut(keys) {
+  for (const mod of modifiers) $('mod' + mod).checked = keys.includes(mod);
+  $('shortcutKey').value = keys[keys.length - 1];
+}
+$('editShortcut').onclick = () => {
+  fillShortcut((prefs.shortcutWanted || 'Control+Alt+R').split('+'));
+  listening = true;
+  shortcutLabels();
+  $('shortcutKey').focus();
+};
+$('cancelShortcut').onclick = () => { listening = false; shortcutLabels(); $('editShortcut').focus(); };
 async function saveShortcut(value) {
-  listening = false;
   controls('settings');
+  let feedback;
   try {
     await api.setShortcut(value);
+    listening = false;
     await refresh();
-    $('settingsStatus').textContent = value ? 'Сочетание сохранено.' : 'Горячая клавиша выключена.';
-  } catch (e) { $('settingsStatus').textContent = message(e); }
-  finally { controls('idle'); shortcutLabels(); }
+    feedback = value ? '✓ Сочетание сохранено: ' + pretty(value) : 'Горячая клавиша выключена.';
+  } catch (e) { feedback = message(e); }
+  finally { controls('idle'); shortcutLabels(feedback); }
 }
 $('clearShortcut').onclick = () => saveShortcut('');
-$('editShortcut').onkeydown = event => {
-  if (!listening || event.key === 'Tab') return;
+$('applyShortcut').onclick = () => {
+  const mods = modifiers.filter(mod => $('mod' + mod).checked);
+  if (!mods.some(mod => mod !== 'Shift')) {
+    shortcutLabels('Выберите хотя бы один модификатор: Control, Option или Command.');
+    return;
+  }
+  return saveShortcut([...mods, $('shortcutKey').value].join('+'));
+};
+$('shortcutEditor').onkeydown = event => {
+  if (!listening || event.repeat) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    $('cancelShortcut').onclick();
+    return;
+  }
+  if (!(event.ctrlKey || event.altKey || event.metaKey)) return;
+  const key = event.code.replace(/^(Key|Digit)/, '');
+  if (!keyChoices.includes(key)) return;
   event.preventDefault();
-  if (event.repeat) return;
-  if (event.key === 'Escape') { listening = false; shortcutLabels(); return; }
-  const match = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
-  if (!match || !(event.ctrlKey || event.altKey || event.metaKey)) return;
-  const keys = [];
-  if (event.ctrlKey) keys.push('Control');
-  if (event.altKey) keys.push('Alt');
-  if (event.shiftKey) keys.push('Shift');
-  if (event.metaKey) keys.push('Command');
-  keys.push(match[1] || match[2]);
-  return saveShortcut(keys.join('+'));
+  const flags = [event.ctrlKey, event.altKey, event.shiftKey, event.metaKey];
+  fillShortcut([...modifiers.filter((_, i) => flags[i]), key]);
 };
 $('folder').onclick = () => guarded(async () => { await api.folder(); await refresh(); if (prefs.folder) status('Можно начинать запись.'); });
 $('show').onclick = () => guarded(() => api.showFolder());
@@ -143,17 +171,34 @@ async function review(id) {
   $('answer').value = '';
   present(id, part);
 }
+function apiState(text, kind = '') {
+  $('apiState').textContent = text;
+  $('apiState').className = kind;
+}
+function showApiState() {
+  if (!prefs.automatic) return apiState('Авторасшифровка выключена.');
+  const check = prefs.apiCheck;
+  if (!check) return apiState('Ключ сохранён. Подключение ещё не проверено.');
+  const when = new Date(check.time).toLocaleString('ru-RU');
+  if (check.ok) apiState('✓ API подключён. Тестовая фраза расшифрована · ' + when, 'success');
+  else apiState('Проверка не пройдена · ' + when + '. ' + check.message, 'error');
+}
 async function setKey(value) {
   controls('settings');
+  $('settingsStatus').textContent = '';
+  if (value !== null) apiState('Проверяем подключение к OpenAI…');
   try {
-    await api.apiKey(value);
+    if (value === undefined) await api.checkApi();
+    else await api.apiKey(value);
     $('apiKey').value = '';
     await refresh();
-    status(value === null ? 'Выбран ручной режим.' : 'Авторасшифровка включена.');
+  } catch (e) {
+    apiState((value === undefined ? 'Ошибка проверки. ' : value === null ? 'Не удалось отключить ключ. ' : 'Новый ключ не сохранён. ') + message(e), 'error');
   } finally { controls('idle'); }
 }
-$('enableApi').onclick = () => guarded(() => setKey($('apiKey').value));
-$('disableApi').onclick = () => guarded(() => setKey(null));
+$('enableApi').onclick = () => setKey($('apiKey').value);
+$('checkApi').onclick = () => setKey(undefined);
+$('disableApi').onclick = () => setKey(null);
 api.onProgress((i, n) => status('Расшифровка в OpenAI · часть ' + i + ' из ' + n));
 $('reveal').onclick = () => guarded(() => api.revealPart(reviewing.id));
 $('chat').onclick = () => guarded(() => api.openChat());

@@ -33,3 +33,21 @@ test('automatic upload resumes after quota error and publishes one TXT', async t
   assert.deepEqual(parts, ['part-000001.wav','part-000002.wav','part-000002.wav']);
   assert.equal(await fs.readFile(path.join(folder,file),'utf8'), 'Начало\n\nКонец\n');
 });
+
+test('connection check submits bundled speech to the transcription endpoint and requires a transcript', async () => {
+  const { checkConnection } = require('../app/transcription.cjs');
+  const check = response => checkConnection('mock', async (url, options) => {
+    assert.equal(url, 'https://api.openai.com/v1/audio/transcriptions');
+    assert.equal(options.body.get('model'), 'gpt-transcribe');
+    const file = options.body.get('file');
+    assert.equal(file.name, 'connection-test.wav');
+    const wav = Buffer.from(await file.arrayBuffer());
+    assert.equal(wav.subarray(0,4).toString(), 'RIFF');
+    assert.ok(wav.subarray(44).some(x => x !== 0));
+    return response;
+  });
+  await check(Response.json({text:'Connection test.'}));
+  await assert.rejects(check(Response.json({text:'  '})), /пустую/);
+  await assert.rejects(check(new Response(null,{status:401})), /401/);
+  await assert.rejects(check(new Response(null,{status:429})), /баланс/);
+});
