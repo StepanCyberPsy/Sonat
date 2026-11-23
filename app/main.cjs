@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, shell, safeStorage, clipboard, globalShortcut, Menu, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, shell, safeStorage, clipboard, globalShortcut, Menu, Tray, nativeImage, protocol, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
@@ -7,6 +7,7 @@ const { Recording, pending, nextPart, savePart, sessionDir, saveJSON } = require
 const { transcribe, checkConnection } = require('./transcription.cjs');
 
 const { setupCallPrompts } = require('./call-prompts.cjs');
+const { createUpdateMenu } = require('./update-menu.cjs');
 const { Updater } = require('./updates.cjs');
 const { RecordShortcut, createMacModifierRegistry, modifierMask } = require('./shortcuts.cjs');
 
@@ -16,6 +17,13 @@ const page = 'sonat://studio/index.html';
 let win, settingsFile, active, operation = '', writeError;
 let settings = {};
 let quitting = false;
+let tray;
+function showMainWindow() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
 let writeQueue = Promise.resolve();
 
 function trusted(event) {
@@ -103,13 +111,16 @@ async function setup() {
   const shortcut = new RecordShortcut(globalShortcut, toggleFromKeyboard, { modifierRegistry });
   const updater = new Updater({ app });
   let callPrompts;
-  handle('update-app', () => exclusive('update', async () => {
-    const state = await updater.check();
-    if (state.state === 'current') return 'Установлена последняя версия Sonat ' + state.currentVersion + '.';
-    win.webContents.send('update-progress', 'Загружаем Sonat ' + state.availableVersion + '. Приложение перезапустится после проверки.');
-    await updater.install();
-    return 'Обновление установлено. Перезапускаем Sonat…';
-  }));
+  const updates = createUpdateMenu({
+    updater, redraw: renderMenus,
+    install: async version => {
+      win.webContents.send('update-progress', 'Загружаем Sonat ' + version + '. Приложение перезапустится после проверки.');
+      await updater.install();
+    },
+    report: message => { if (!quitting) dialog.showMessageBox({ type: 'info', title: 'Sonat', message }); }
+  });
+  const startUpdate = () => exclusive('update', updates.update);
+  handle('update-app', startUpdate);
   handle('set-shortcut', value => exclusive('shortcut', () => shortcut.change(value,
     key => configure({ shortcut: key }))));
   handle('info', async () => ({
@@ -206,12 +217,34 @@ async function setup() {
     saveEnabled: value => exclusive('settings', () => configure({ callDetection: value }))
   });
   await shortcut.restore(settings.shortcut);
-  app.on('will-quit', () => { callPrompts.destroy(); shortcut.destroy(); globalShortcut.unregisterAll(); });
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'Sonat', submenu: [{ role: 'about', label: 'О Sonat' }, { type: 'separator' }, { label: 'Настройки…', accelerator: 'Command+,', click: () => { win.show(); win.webContents.send('settings'); } }, { type: 'separator' }, { role: 'hide', label: 'Скрыть Sonat' }, { role: 'quit', label: 'Завершить Sonat' }] },
-    { label: 'Правка', submenu: [{ role: 'cut', label: 'Вырезать' }, { role: 'copy', label: 'Скопировать' }, { role: 'paste', label: 'Вставить' }, { role: 'selectAll', label: 'Выделить всё' }] },
-    { label: 'Окно', submenu: [{ role: 'minimize', label: 'Свернуть' }, { role: 'zoom', label: 'Увеличить' }] }
-  ]));
+  function renderMenus() {
+    if (!tray || tray.isDestroyed() || quitting) return;
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Открыть Sonat', click: showMainWindow },
+      updates.item(startUpdate),
+      { type: 'separator' },
+      { label: 'Завершить Sonat', click: () => app.quit() }
+    ]));
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { label: 'Sonat', submenu: [{ role: 'about', label: 'О Sonat' }, { type: 'separator' }, { label: 'Настройки…', accelerator: 'Command+,', click: () => { showMainWindow(); win.webContents.send('settings'); } }, updates.item(startUpdate), { type: 'separator' }, { role: 'hide', label: 'Скрыть Sonat' }, { role: 'quit', label: 'Завершить Sonat' }] },
+      { label: 'Правка', submenu: [{ role: 'cut', label: 'Вырезать' }, { role: 'copy', label: 'Скопировать' }, { role: 'paste', label: 'Вставить' }, { role: 'selectAll', label: 'Выделить всё' }] },
+      { label: 'Окно', submenu: [{ role: 'minimize', label: 'Свернуть' }, { role: 'zoom', label: 'Увеличить' }] }
+    ]));
+  }
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'SonatTemplate.png'));
+  if (icon.isEmpty()) throw new Error('Не удалось загрузить значок строки меню.');
+  icon.setTemplateImage(true);
+  tray = new Tray(icon);
+  tray.setToolTip('Sonat');
+  renderMenus();
+  const refreshTimer = setInterval(updates.refresh, 4 * 60 * 60 * 1000);
+  app.on('will-quit', () => {
+    clearInterval(refreshTimer);
+    tray.destroy();
+    callPrompts.destroy();
+    shortcut.destroy();
+    globalShortcut.unregisterAll();
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
@@ -227,7 +260,7 @@ async function setup() {
       event.preventDefault();
       quitting = false;
       dialog.showMessageBoxSync(win, { message: active ? 'Сначала остановите запись.' : 'Дождитесь завершения операции.' });
-    } else if (!quitting && settings.callDetection !== false) {
+    } else if (!quitting) {
       event.preventDefault();
       win.hide();
     }
@@ -238,13 +271,14 @@ async function setup() {
     if (!win.isDestroyed()) win.reload();
   });
   await win.loadURL(page);
+  updates.refresh();
 }
 
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on('second-instance', () => { if (win) { win.restore(); win.show(); win.focus(); } });
+  app.on('second-instance', showMainWindow);
   app.on('before-quit', () => { quitting = true; });
-  app.on('activate', () => { if (win && !win.isDestroyed()) { win.show(); win.focus(); } });
+  app.on('activate', showMainWindow);
   app.on('window-all-closed', () => app.quit());
   app.whenReady().then(setup).catch(e => { dialog.showErrorBox('Sonat', e.message); app.quit(); });
 }

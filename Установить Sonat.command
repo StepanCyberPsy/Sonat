@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 source_dir="$PWD"
-sonat_version=0.5.0
+sonat_version=0.5.1
 version=45.4.1
 case "$(uname -sm)" in
   'Darwin arm64') arch=arm64; digest=d080c3b05a01bd16137f2c12ab9ebf083c577757fe846844ba325bafa8e8bdf4 ;;
@@ -15,8 +15,8 @@ if (( major < 14 || (major == 14 && minor < 2) )); then
 fi
 target_dir="$HOME/Applications"
 target="$target_dir/Sonat.app"
-if [[ -d "$target" && "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$target/Contents/Info.plist" 2>/dev/null || true)" != "0.5.0" ]]; then
-  target="$target_dir/Sonat 0.5.0.app"
+if [[ -d "$target" && "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$target/Contents/Info.plist" 2>/dev/null || true)" != "0.5.1" ]]; then
+  target="$target_dir/Sonat 0.5.1.app"
 fi
 if [[ -e "$target" ]]; then
   echo "Sonat уже находится в $target"
@@ -83,8 +83,8 @@ set_string() {
 set_string CFBundleIdentifier com.stepancyberpsy.sonat
 set_string CFBundleName Sonat
 set_string CFBundleDisplayName Sonat
-set_string CFBundleShortVersionString 0.5.0
-set_string CFBundleVersion 0.5.0
+set_string CFBundleShortVersionString 0.5.1
+set_string CFBundleVersion 0.5.1
 set_string CFBundleIconFile Sonat.icns
 set_string LSMinimumSystemVersion 14.2
 if /usr/bin/plutil -extract CFBundleIconName raw -o - "$plist" >/dev/null 2>&1; then
