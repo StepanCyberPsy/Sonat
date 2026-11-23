@@ -64,16 +64,26 @@ cp "$source_dir/package.json" "$resources/"
 # Sign nested code in post-order, leaving symlinks inside versioned frameworks intact.
 echo 'Подготавливается приложение и проверяется его подпись…'
 frameworks="$bundle/Contents/Frameworks"
-/usr/bin/find "$frameworks" -depth \( -type d \( -name '*.framework' -o -name '*.app' -o -name '*.xpc' \) -o -type f \( -perm -0100 -o -name '*.dylib' -o -name '*.so' \) \) -print0 > "$stage/nested-code"
+# Intel distributions also contain unsigned helpers. Seal all standalone Mach-O
+# files before signing any wrapper: sibling order in a directory is unspecified.
+# codesign can treat a framework's main executable as its enclosing bundle.
+# Its owning wrapper signs that executable in the second pass.
+/usr/bin/find "$frameworks" -type f \( -perm -0100 -o -name '*.dylib' -o -name '*.so' -o -path '*/Helpers/*' \) -print0 > "$stage/nested-files"
 while IFS= read -r -d '' item; do
-  if [[ -d "$item" ]]; then
+  case "$item" in
+    *.framework/Versions/*)
+      framework_name="${item%.framework/Versions/*}"
+      framework_name="${framework_name##*/}"
+      if [[ "${item##*/}" == "$framework_name" ]]; then continue; fi ;;
+  esac
+  if [[ "$(/usr/bin/file -b "$item")" == *Mach-O* ]] && ! /usr/bin/codesign --verify "$item" 2>/dev/null; then
     /usr/bin/codesign --force --sign - "$item"
-  elif [[ "$(/usr/bin/file -b "$item")" == *Mach-O* ]]; then
-    if ! /usr/bin/codesign --verify "$item" 2>/dev/null; then
-      /usr/bin/codesign --force --sign - "$item"
-    fi
   fi
-done < "$stage/nested-code"
+done < "$stage/nested-files"
+/usr/bin/find "$frameworks" -depth -type d \( -name '*.framework' -o -name '*.app' -o -name '*.xpc' \) -print0 > "$stage/nested-bundles"
+while IFS= read -r -d '' item; do
+  /usr/bin/codesign --force --sign - "$item"
+done < "$stage/nested-bundles"
 /usr/bin/codesign --force --sign - --identifier com.stepancyberpsy.sonat "$bundle"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$bundle"
 mv -n "$bundle" "$target"
