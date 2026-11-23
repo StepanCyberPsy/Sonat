@@ -1,10 +1,12 @@
-const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, shell, safeStorage, clipboard, Menu, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, shell, safeStorage, clipboard, globalShortcut, Menu, protocol, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { Recording, pending, nextPart, savePart, sessionDir, saveJSON } = require('./recordings.cjs');
 
 const { transcribe } = require('./transcription.cjs');
+
+const { RecordShortcut } = require('./shortcuts.cjs');
 
 app.setName('Sonat');
 protocol.registerSchemesAsPrivileged([{ scheme: 'sonat', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
@@ -57,7 +59,38 @@ async function setup() {
   try { settings = JSON.parse(await fs.readFile(settingsFile, 'utf8')); }
   catch (e) { if (e.code !== 'ENOENT') throw e; }
 
+  let lastShortcutAt = 0;
+  function toggleFromKeyboard() {
+    const now = Date.now();
+    const previous = lastShortcutAt;
+    lastShortcutAt = now;
+    if (now - previous < 800 || operation || !win || win.isDestroyed()) return;
+    const contents = win.webContents;
+    if (contents.getURL() !== page || contents.isLoadingMainFrame()) return;
+    // Display capture needs a focused document and a real initiating user action.
+    // An OS-registered keypress is the gesture for this fixed local button.
+    function press() {
+      if (win.isDestroyed() || contents.getURL() !== page) return;
+      contents.executeJavaScript("if (!document.querySelector('dialog[open]')) document.getElementById('record').click()", true)
+        .catch(() => {});
+    }
+    if (active || win.isFocused()) { press(); return; }
+    const onFocus = () => {
+      clearTimeout(expiry);
+      contents.focus();
+      press();
+    };
+    const expiry = setTimeout(() => win.removeListener('focus', onFocus), 750);
+    win.once('focus', onFocus);
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+  const shortcut = new RecordShortcut(globalShortcut, toggleFromKeyboard);
+  handle('set-shortcut', value => exclusive('shortcut', () => shortcut.change(value,
+    key => configure({ shortcut: key }))));
   handle('info', async () => ({
+    shortcut: shortcut.active, shortcutWanted: shortcut.requested,
     folder: settings.folder || '', automatic: Boolean(settings.apiKey),
     pending: settings.folder ? await pending(settings.folder) : []
   }));
@@ -124,11 +157,13 @@ async function setup() {
     return net.fetch(pathToFileURL(path.join(__dirname, url.pathname.slice(1))).href);
   });
   win = new BrowserWindow({
-    width: 720, height: 780, minWidth: 520, minHeight: 600, title: 'Sonat',
+    width: 720, height: 800, minWidth: 500, minHeight: 560, title: 'Sonat',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
   });
+  shortcut.restore(settings.shortcut);
+  app.on('will-quit', () => globalShortcut.unregisterAll());
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'Sonat', submenu: [{ role: 'about', label: 'О Sonat' }, { type: 'separator' }, { role: 'hide', label: 'Скрыть Sonat' }, { role: 'quit', label: 'Завершить Sonat' }] },
+    { label: 'Sonat', submenu: [{ role: 'about', label: 'О Sonat' }, { type: 'separator' }, { label: 'Настройки…', accelerator: 'Command+,', click: () => { win.show(); win.webContents.send('settings'); } }, { type: 'separator' }, { role: 'hide', label: 'Скрыть Sonat' }, { role: 'quit', label: 'Завершить Sonat' }] },
     { label: 'Правка', submenu: [{ role: 'cut', label: 'Вырезать' }, { role: 'copy', label: 'Скопировать' }, { role: 'paste', label: 'Вставить' }, { role: 'selectAll', label: 'Выделить всё' }] },
     { label: 'Окно', submenu: [{ role: 'minimize', label: 'Свернуть' }, { role: 'zoom', label: 'Увеличить' }] }
   ]));

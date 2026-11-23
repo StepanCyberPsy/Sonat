@@ -6,23 +6,35 @@ let phase = 'idle';
 let live = null;
 let reviewing = null;
 
-function status(text) { $('status').textContent = text; }
+function status(text) {
+  $('status').textContent = text;
+  if ($('settingsPanel').open) $('settingsStatus').textContent = text;
+}
+const phaseLabels = {
+  idle: 'Готов к записи', starting: 'Подключение', recording: 'Идёт запись',
+  stopping: 'Сохранение', transcribing: 'Расшифровка', review: 'Запись сохранена',
+  settings: 'Настройки', choosing: 'Выбор папки'
+};
 function message(e) {
   return (e.message || String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 }
 function controls(next) {
   phase = next;
   const idle = phase === 'idle';
-  $('record').disabled = !(idle || phase === 'recording');
+  $('stage').textContent = phaseLabels[next] || '';
+  $('console').classList.toggle('on', phase === 'recording');
+  $('record').disabled = !(idle || phase === 'recording' || phase === 'review');
   $('record').textContent = phase === 'recording' ? 'Остановить запись' : 'Начать запись';
   $('record').classList.toggle('recording', phase === 'recording');
-  for (const id of ['modes','folder','apiKey','enableApi','disableApi']) $(id).disabled = !idle;
+  for (const id of ['modes','folder','apiKey','enableApi','disableApi','editShortcut','clearShortcut']) $(id).disabled = !idle;
   for (const b of $('list').querySelectorAll('button')) b.disabled = !idle;
 }
 async function refresh() {
   prefs = await api.info();
   $('path').textContent = prefs.folder || 'Папка ещё не выбрана';
   $('show').hidden = !prefs.folder;
+  $('storageHint').textContent = prefs.folder ? 'Тексты — в этой папке. WAV — в подпапке «Аудио Sonat».' : 'Выберите место на Mac для текстов и аудио.';
+  shortcutLabels();
   $('disableApi').hidden = !prefs.automatic;
   $('apiState').textContent = prefs.automatic ? 'Включена. Текст сохранится автоматически.' : 'Выключена. Доступна ручная расшифровка в чате.';
   $('list').replaceChildren();
@@ -42,7 +54,63 @@ async function guarded(fn) {
   catch (e) { status(message(e)); }
 }
 function mode() { return document.querySelector('input[name=mode]:checked').value; }
-$('modes').onchange = () => { $('systemLabel').hidden = mode() === 'mic'; };
+$('modes').onchange = () => {
+  const mic = mode() === 'mic';
+  $('systemLabel').hidden = mic;
+  $('sourceHint').textContent = mic ? 'Только микрофон' : 'Микрофон + компьютер';
+};
+let listening = false;
+function shortcutLabels() {
+  const symbols = { Command: '⌘', Alt: '⌥', Control: '⌃', Shift: '⇧' };
+  const pretty = value => value.split('+').map(k => symbols[k] || k).join('');
+  const key = prefs.shortcut ? pretty(prefs.shortcut) : '';
+  $('keyHint').textContent = key;
+  $('editShortcut').textContent = listening ? 'Нажмите сочетание…' : key ? 'Изменить ' + key : 'Назначить сочетание';
+  $('clearShortcut').hidden = !prefs.shortcutWanted;
+  $('shortcutHelp').textContent = listening ? 'Удерживайте ⌘, ⌥ или ⌃ и нажмите букву или цифру. Esc — отмена.'
+    : key ? 'Действует также из Zoom и браузера.' : prefs.shortcutWanted ? 'Сочетание ' + pretty(prefs.shortcutWanted) + ' недоступно. Выберите другое.' : 'Горячая клавиша выключена.';
+}
+function openSettings() {
+  if ($('settingsPanel').open) return;
+  $('settingsStatus').textContent = '';
+  $('settingsPanel').showModal();
+}
+$('settingsButton').onclick = openSettings;
+api.onSettings(openSettings);
+$('closeSettings').onclick = () => $('settingsPanel').close();
+$('settingsPanel').onclose = () => {
+  listening = false;
+  $('apiKey').value = '';
+  shortcutLabels();
+};
+$('editShortcut').onclick = () => { listening = !listening; shortcutLabels(); };
+$('editShortcut').onblur = () => { if (listening) { listening = false; shortcutLabels(); } };
+async function saveShortcut(value) {
+  listening = false;
+  controls('settings');
+  try {
+    await api.setShortcut(value);
+    await refresh();
+    $('settingsStatus').textContent = value ? 'Сочетание сохранено.' : 'Горячая клавиша выключена.';
+  } catch (e) { $('settingsStatus').textContent = message(e); }
+  finally { controls('idle'); shortcutLabels(); }
+}
+$('clearShortcut').onclick = () => saveShortcut('');
+$('editShortcut').onkeydown = event => {
+  if (!listening || event.key === 'Tab') return;
+  event.preventDefault();
+  if (event.repeat) return;
+  if (event.key === 'Escape') { listening = false; shortcutLabels(); return; }
+  const match = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code);
+  if (!match || !(event.ctrlKey || event.altKey || event.metaKey)) return;
+  const keys = [];
+  if (event.ctrlKey) keys.push('Control');
+  if (event.altKey) keys.push('Alt');
+  if (event.shiftKey) keys.push('Shift');
+  if (event.metaKey) keys.push('Command');
+  keys.push(match[1] || match[2]);
+  return saveShortcut(keys.join('+'));
+};
 $('folder').onclick = () => guarded(async () => { await api.folder(); await refresh(); if (prefs.folder) status('Можно начинать запись.'); });
 $('show').onclick = () => guarded(() => api.showFolder());
 function present(id, part) {
@@ -68,7 +136,10 @@ async function review(id) {
     finally { controls('idle'); await refresh(); }
     return;
   }
-  const part = await api.nextPart(id);
+  controls('stopping');
+  let part;
+  try { part = await api.nextPart(id); }
+  catch (e) { controls('idle'); throw e; }
   $('answer').value = '';
   present(id, part);
 }
@@ -126,14 +197,34 @@ function monitor(s, stream, meter, gain) {
   source.connect(analyser);
   s.meters.push({ analyser, meter, data: new Float32Array(analyser.fftSize) });
 }
+const wave = $('wave');
+const pen = wave.getContext('2d');
+const levels = new Float32Array(96);
+function drawWave() {
+  pen.clearRect(0, 0, wave.width, wave.height);
+  const middle = wave.height / 2;
+  pen.fillStyle = '#486459';
+  pen.fillRect(0, middle, wave.width, 1);
+  pen.fillStyle = '#b4dbad';
+  for (let i = 0; i < levels.length; i++) {
+    const height = Math.round(levels[i] * (middle - 2));
+    if (height) pen.fillRect(i * wave.width / levels.length, middle - height, 4, 2 * height);
+  }
+}
+drawWave();
 function tick(s) {
   const seconds = Math.floor(s.ctx.currentTime - s.started);
   const two = n => String(n).padStart(2, '0');
   $('time').value = (seconds >= 3600 ? Math.floor(seconds/3600) + ':' : '') + two(Math.floor(seconds/60)%60) + ':' + two(seconds%60);
+  let peak = 0;
   for (const { analyser, meter, data } of s.meters) {
     analyser.getFloatTimeDomainData(data);
     meter.value = Math.min(1, Math.max(...data.map(Math.abs)) * 2);
+    peak = Math.max(peak, meter.value);
   }
+  levels.copyWithin(0, 1);
+  levels[levels.length - 1] = peak;
+  drawWave();
 }
 function interrupt(s, why) {
   if (!s.fault) s.fault = why;
@@ -141,7 +232,8 @@ function interrupt(s, why) {
 }
 async function start() {
   if (!prefs.folder) {
-    await api.folder(); await refresh();
+    controls('choosing');
+    try { await api.folder(); await refresh(); } finally { controls('idle'); }
     if (!prefs.folder) return;
     // A second click supplies a fresh user gesture for the system capture prompt.
     status('Папка выбрана. Нажмите «Начать запись».');
@@ -185,6 +277,7 @@ async function start() {
     await s.ctx.resume();
     if (s.fault || s.streams.some(stream => stream.getAudioTracks()[0]?.readyState !== 'live'))
       throw new Error(s.fault || 'Источник звука отключился.');
+    levels.fill(0);
     s.started = s.ctx.currentTime;
     tick(s);
     s.timer = setInterval(() => tick(s), 150);
@@ -223,5 +316,14 @@ async function stop(s) {
   if (s.fault) { status(s.fault + ' Доступная часть записи сохранена.'); return; }
   await review(s.id);
 }
-$('record').onclick = () => guarded(() => phase === 'recording' ? stop(live) : start());
+$('record').onclick = () => guarded(async () => {
+  if (phase === 'recording') return stop(live);
+  if (phase === 'review') {
+    if ($('answer').value.trim()) { status('Сохраните введённый текст или нажмите «Продолжить позже».'); return; }
+    reviewing = null;
+    $('review').hidden = true;
+    controls('idle');
+  }
+  if (phase === 'idle') await start();
+});
 guarded(async () => { await refresh(); if (prefs.folder) status('Можно начинать запись.'); });

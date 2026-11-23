@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('sonat', {
   info: () => ipcRenderer.invoke('info'),
+  setShortcut: value => ipcRenderer.invoke('set-shortcut', value),
+  onSettings: fn => ipcRenderer.on('settings', () => fn()),
   folder: () => ipcRenderer.invoke('folder'),
   showFolder: () => ipcRenderer.invoke('show-folder'),
   start: mode => ipcRenderer.invoke('start', mode),

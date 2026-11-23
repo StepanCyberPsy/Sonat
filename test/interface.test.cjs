@@ -10,7 +10,7 @@ async function studio(mode, { systemAllowed = true, automatic = false } = {}) {
   const calls = [];
   const streams = [];
   function element(id) {
-    if (!elements.has(id)) elements.set(id, { value: '', classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
+    if (!elements.has(id)) elements.set(id, { value: '', getContext: () => ({clearRect(){},fillRect(){}}), showModal(){this.open=true;}, close(){this.open=false;this.onclose?.();}, classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
     return elements.get(id);
   }
   function source(kind) {
@@ -42,7 +42,7 @@ async function studio(mode, { systemAllowed = true, automatic = false } = {}) {
     } };
   }
   const api = {
-    info: async () => ({ folder:'/test', pending:[], automatic }), onProgress() {},
+    info: async () => ({ folder:'/test', pending:[], automatic, shortcut: 'Control+Alt+R', shortcutWanted: 'Control+Alt+R' }), onProgress() {}, onSettings() {},
     start: async value => { calls.push('start-' + value); return 'id'; },
     samples: async (_,bytes) => { assert.equal(bytes.byteLength,4); calls.push('write'); },
     stop: async () => calls.push('stop'), nextPart: async () => { calls.push('prepare'); return { name:'part-000001.wav', index:1, total:1 }; },

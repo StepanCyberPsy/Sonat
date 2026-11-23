@@ -3,28 +3,29 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Sonat</title><link rel="stylesheet" href="style.css"></head>
 <body><main>
-<header><h1>Sonat</h1></header>
-<section class="recorder">
-<fieldset id="modes"><legend>Режим записи</legend><label><input type="radio" name="mode" value="call" checked> Звонок</label><label><input type="radio" name="mode" value="mic"> Диктофон</label></fieldset>
+<header class="top"><h1><span class="logo" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Sonat</h1><button id="settingsButton" type="button">Настройки</button></header>
+<section class="recorder" aria-label="Запись">
+<fieldset id="modes"><legend>Источник записи</legend><div class="segments"><label><input type="radio" name="mode" value="call" checked><span>Звонок</span></label><label><input type="radio" name="mode" value="mic"><span>Диктофон</span></label></div></fieldset>
+<div id="console" class="console"><div class="consoleHead"><strong id="stage">Готов к записи</strong><span id="sourceHint">Микрофон + компьютер</span></div>
 <output id="time" aria-label="Длительность">00:00</output>
-<div class="meters"><label>Микрофон <meter id="mic" min="0" max="1" value="0"></meter></label><label id="systemLabel">Звук компьютера <meter id="system" min="0" max="1" value="0"></meter></label></div>
-<button id="record" class="primary">Начать запись</button>
-<p id="status" role="status">Выберите папку для расшифровок.</p>
-</section>
-<section><h2>Сохранение</h2>
-<div class="row"><div id="path">Папка ещё не выбрана</div><button id="folder">Выбрать папку</button><button id="show" hidden>Открыть</button></div>
-</section>
-<section><h2>Авторасшифровка</h2>
-<p id="apiState"></p>
-<label for="apiKey">Ключ OpenAI API</label>
-<div class="row"><input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Ключ проекта"><button id="enableApi">Сохранить и включить</button><button id="disableApi" hidden>Отключить и забыть ключ</button></div>
-<p>При включении Sonat отправляет аудио в OpenAI после остановки записи. Расход учитывается на балансе API.</p>
-</section>
-<section id="review" hidden><h2 id="partTitle">Расшифровка в ChatGPT</h2>
-<p id="partInfo"></p>
-<p>Прикрепите выделенный WAV в обычном чате ChatGPT, отправьте запрос и скопируйте ответ сюда.</p>
+<canvas id="wave" width="840" height="74" aria-hidden="true"></canvas>
+<div class="meters"><label>Микрофон <meter id="mic" min="0" max="1" value="0"></meter></label><label id="systemLabel">Звук компьютера <meter id="system" min="0" max="1" value="0"></meter></label></div></div>
+<div class="actions"><button id="record" class="primary">Начать запись</button><kbd id="keyHint" aria-label="Горячая клавиша"></kbd></div>
+<p id="status" role="status">Выберите папку для расшифровок.</p></section>
+<section class="card"><div class="sectionHead"><h2>Папка записей</h2><button id="show" hidden>Открыть в Finder</button></div>
+<p id="path">Папка ещё не выбрана</p><p class="muted" id="storageHint">Здесь будут тексты и подпапка с аудио.</p><button id="folder">Выбрать папку</button></section>
+<section class="card" id="review" hidden><h2 id="partTitle">Расшифровка в ChatGPT</h2><p id="partInfo"></p>
+<p>Прикрепите WAV в чате ChatGPT и вставьте сюда ответ.</p>
 <div class="row"><button id="reveal">Показать WAV в Finder</button><button id="chat">Открыть ChatGPT</button><button id="prompt">Скопировать запрос</button></div>
-<label for="answer">Текст этой части</label><textarea id="answer" rows="5"></textarea>
-<button id="accept">Сохранить часть</button><button id="later">Продолжить позже</button></section>
-<section id="queue" hidden><h2>Ожидают расшифровки</h2><ul id="list"></ul></section>
-</main><script src="renderer.js"></script></body></html>
+<label for="answer">Текст этой части</label><textarea id="answer" rows="5"></textarea><div class="row"><button id="accept">Сохранить часть</button><button id="later">Продолжить позже</button></div></section>
+<section class="card" id="queue" hidden><h2>Ожидают расшифровки</h2><ul id="list"></ul></section>
+</main>
+<dialog id="settingsPanel" aria-labelledby="settingsTitle"><div class="sectionHead"><h2 id="settingsTitle">Настройки</h2><button id="closeSettings">Готово</button></div>
+<section><h3>Горячая клавиша записи</h3><p>Одно сочетание запускает и останавливает запись, пока Sonat открыт.</p>
+<div class="row"><button id="editShortcut" aria-describedby="shortcutHelp">Назначить сочетание</button><button id="clearShortcut">Отключить</button></div>
+<p class="muted" id="shortcutHelp" role="status"></p></section>
+<section><h3>Авторасшифровка</h3><p id="apiState"></p>
+<label for="apiKey">Ключ OpenAI API</label><input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Ключ проекта">
+<div class="row"><button id="enableApi">Сохранить и включить</button><button id="disableApi" hidden>Отключить и забыть ключ</button></div>
+<p class="muted">После остановки Sonat отправит аудио в OpenAI для расшифровки. Используются кредиты API.</p><p id="settingsStatus" role="status"></p></section></dialog>
+<script src="renderer.js"></script></body></html>
