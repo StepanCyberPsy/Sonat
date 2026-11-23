@@ -16,13 +16,15 @@ function controls(next) {
   $('record').disabled = !(idle || phase === 'recording');
   $('record').textContent = phase === 'recording' ? 'Остановить запись' : 'Начать запись';
   $('record').classList.toggle('recording', phase === 'recording');
-  for (const id of ['modes','folder']) $(id).disabled = !idle;
+  for (const id of ['modes','folder','apiKey','enableApi','disableApi']) $(id).disabled = !idle;
   for (const b of $('list').querySelectorAll('button')) b.disabled = !idle;
 }
 async function refresh() {
   prefs = await api.info();
   $('path').textContent = prefs.folder || 'Папка ещё не выбрана';
   $('show').hidden = !prefs.folder;
+  $('disableApi').hidden = !prefs.automatic;
+  $('apiState').textContent = prefs.automatic ? 'Включена. Текст сохранится автоматически.' : 'Выключена. Доступна ручная расшифровка в чате.';
   $('list').replaceChildren();
   for (const id of prefs.pending) {
     const li = document.createElement('li');
@@ -59,10 +61,29 @@ function present(id, part) {
   status('Аудио сохранено. Откройте ChatGPT для расшифровки.');
 }
 async function review(id) {
+  if (prefs.automatic) {
+    controls('transcribing');
+    status('Подготовка записи к отправке в OpenAI…');
+    try { present(id, await api.transcribe(id)); }
+    finally { controls('idle'); await refresh(); }
+    return;
+  }
   const part = await api.nextPart(id);
   $('answer').value = '';
   present(id, part);
 }
+async function setKey(value) {
+  controls('settings');
+  try {
+    await api.apiKey(value);
+    $('apiKey').value = '';
+    await refresh();
+    status(value === null ? 'Выбран ручной режим.' : 'Авторасшифровка включена.');
+  } finally { controls('idle'); }
+}
+$('enableApi').onclick = () => guarded(() => setKey($('apiKey').value));
+$('disableApi').onclick = () => guarded(() => setKey(null));
+api.onProgress((i, n) => status('Расшифровка в OpenAI · часть ' + i + ' из ' + n));
 $('reveal').onclick = () => guarded(() => api.revealPart(reviewing.id));
 $('chat').onclick = () => guarded(() => api.openChat());
 $('prompt').onclick = () => guarded(async () => {

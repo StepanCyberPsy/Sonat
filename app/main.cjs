@@ -1,8 +1,10 @@
-const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, shell, clipboard, Menu, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, shell, safeStorage, clipboard, Menu, protocol, net } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { Recording, pending, nextPart, savePart, sessionDir, saveJSON } = require('./recordings.cjs');
+
+const { transcribe } = require('./transcription.cjs');
 
 app.setName('Sonat');
 protocol.registerSchemesAsPrivileged([{ scheme: 'sonat', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
@@ -56,7 +58,7 @@ async function setup() {
   catch (e) { if (e.code !== 'ENOENT') throw e; }
 
   handle('info', async () => ({
-    folder: settings.folder || '',
+    folder: settings.folder || '', automatic: Boolean(settings.apiKey),
     pending: settings.folder ? await pending(settings.folder) : []
   }));
   handle('folder', () => exclusive('folder', async () => {
@@ -92,6 +94,20 @@ async function setup() {
     if (active?.id !== id || operation) throw new Error('Запись уже остановлена.');
     return finish();
   });
+  handle('api-key', value => exclusive('settings', async () => {
+    if (value === null) return configure({ apiKey: null });
+    if (typeof value !== 'string' || !value.trim()) throw new Error('Введите ключ проекта OpenAI.');
+    if (!await safeStorage.isAsyncEncryptionAvailable()) throw new Error('Системное шифрование ключа недоступно.');
+    const encrypted = await safeStorage.encryptStringAsync(value.trim());
+    await configure({ apiKey: encrypted.toString('base64') });
+  }));
+  handle('transcribe', id => exclusive('transcribe', async () => {
+    if (!settings.apiKey) throw new Error('Добавьте ключ API.');
+    const { result: key } = await safeStorage.decryptStringAsync(Buffer.from(settings.apiKey, 'base64'));
+    return transcribe(settings.folder, id, key, (i, n) => {
+      if (!win.isDestroyed()) win.webContents.send('progress', i, n);
+    });
+  }));
   handle('next-part', id => exclusive('prepare', () => nextPart(settings.folder, id)));
   handle('save-part', (id, name, text) => exclusive('save', () => savePart(settings.folder, id, name, text)));
   handle('reveal-part', id => exclusive('reveal', async () => {

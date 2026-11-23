@@ -14,6 +14,12 @@
 <section><h2>Сохранение</h2>
 <div class="row"><div id="path">Папка ещё не выбрана</div><button id="folder">Выбрать папку</button><button id="show" hidden>Открыть</button></div>
 </section>
+<section><h2>Авторасшифровка</h2>
+<p id="apiState"></p>
+<label for="apiKey">Ключ OpenAI API</label>
+<div class="row"><input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Ключ проекта"><button id="enableApi">Сохранить и включить</button><button id="disableApi" hidden>Отключить и забыть ключ</button></div>
+<p>При включении Sonat отправляет аудио в OpenAI после остановки записи. Расход учитывается на балансе API.</p>
+</section>
 <section id="review" hidden><h2 id="partTitle">Расшифровка в ChatGPT</h2>
 <p id="partInfo"></p>
 <p>Прикрепите выделенный WAV в обычном чате ChatGPT, отправьте запрос и скопируйте ответ сюда.</p>

@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const renderer = fs.readFileSync(path.join(__dirname,'../app/renderer.js'),'utf8');
 
-async function studio(mode, { systemAllowed = true } = {}) {
+async function studio(mode, { systemAllowed = true, automatic = false } = {}) {
   const elements = new Map();
   const calls = [];
   const streams = [];
@@ -42,10 +42,11 @@ async function studio(mode, { systemAllowed = true } = {}) {
     } };
   }
   const api = {
-    info: async () => ({ folder:'/test', pending:[] }), onProgress() {},
+    info: async () => ({ folder:'/test', pending:[], automatic }), onProgress() {},
     start: async value => { calls.push('start-' + value); return 'id'; },
     samples: async (_,bytes) => { assert.equal(bytes.byteLength,4); calls.push('write'); },
     stop: async () => calls.push('stop'), nextPart: async () => { calls.push('prepare'); return { name:'part-000001.wav', index:1, total:1 }; },
+    transcribe: async () => { calls.push('transcribe'); return { file:'auto.txt' }; },
     savePart: async (_id, _name, value) => { assert.equal(value, 'Мой текст'); calls.push('save'); return { file:'file.txt' }; }
   };
   const devices = {
@@ -90,4 +91,11 @@ test('denied system capture leaves the call stopped and explains permission', as
   assert.deepEqual(s.calls,['display']);
   assert.equal(s.element('record').textContent,'Начать запись');
   assert.match(s.element('status').textContent,/Доступ отклонён/);
+});
+
+test('opted-in dictaphone submits only after stop and shows finished TXT', async () => {
+  const s = await studio('mic', {automatic:true});
+  await s.element('record').onclick();
+  assert.deepEqual(s.calls, ['input','microphone','start-mic','write','stop','transcribe']);
+  assert.match(s.element('status').textContent, /auto.txt/);
 });

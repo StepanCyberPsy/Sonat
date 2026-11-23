@@ -14,6 +14,9 @@ if (( major < 14 || (major == 14 && minor < 2) )); then
 fi
 target_dir="$HOME/Applications"
 target="$target_dir/Sonat.app"
+if [[ -d "$target" && "$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$target/Contents/Info.plist" 2>/dev/null || true)" != "0.2.0" ]]; then
+  target="$target_dir/Sonat 0.2.app"
+fi
 if [[ -e "$target" ]]; then
   echo "Sonat уже находится в $target"; open -R "$target"; exit 0
 fi
@@ -34,7 +37,7 @@ set_string() {
 set_string CFBundleIdentifier com.stepancyberpsy.sonat
 set_string CFBundleName Sonat
 set_string CFBundleDisplayName Sonat
-set_string CFBundleShortVersionString 0.1.0
+set_string CFBundleShortVersionString 0.2.0
 set_string NSMicrophoneUsageDescription 'Sonat записывает ваш голос для диктофона и звонков.'
 set_string NSAudioCaptureUsageDescription 'Sonat записывает голоса собеседников из системного звука.'
 set_string NSScreenCaptureUsageDescription 'Sonat получает звук звонка через системный захват.'
