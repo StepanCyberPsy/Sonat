@@ -78,8 +78,11 @@ jobs:
       - run: npm test
       - name: Build and verify the installed app
         run: |
-          './Установить Sonat.command' --no-open
+          SONAT_BUILD_FROM_SOURCE=1 './Установить Sonat.command' --no-open
+          node scripts/smoke-call-probe.cjs "$HOME/Applications/Sonat.app"
           node scripts/package-release.cjs
+      - name: Install the release ZIP without a compiler and reject corrupt downloads
+        run: node scripts/macos-release-install.cjs
       - name: Test real archive, atomic app replacement and launch
         run: SONAT_TEST_REAL_UPDATE=1 node test/macos-updates.cjs
       - uses: actions/upload-artifact@v4

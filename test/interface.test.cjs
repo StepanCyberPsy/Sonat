@@ -10,7 +10,7 @@ async function studio(mode, { systemAllowed = true, automatic = false, start = t
   const calls = [];
   const streams = [];
   function element(id) {
-    if (!elements.has(id)) elements.set(id, { value: '', focus() {}, getContext: () => ({clearRect(){},fillRect(){}}), showModal(){this.open=true;}, close(){this.open=false;this.onclose?.();}, classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
+    if (!elements.has(id)) elements.set(id, { value: '', dataset: {}, focus() {}, getContext: () => ({clearRect(){},fillRect(){}}), showModal(){this.open=true;}, close(){this.open=false;this.onclose?.();}, classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
     return elements.get(id);
   }
   function source(kind) {
@@ -41,8 +41,12 @@ async function studio(mode, { systemAllowed = true, automatic = false, start = t
       this.port.onmessage({data:'stopped'});
     } };
   }
+  const listeners = {};
   const api = {
-    info: async () => ({ folder:'/test', pending:[], automatic, shortcut: 'Control+Alt+R', shortcutWanted: 'Control+Alt+R' }), onProgress() {}, onSettings() {}, onUpdate() {}, onShortcutError(){}, shortcutCapture: async () => {},
+    info: async () => ({ folder:'/test', pending:[], automatic, callDetection: true, callOffer: null, shortcut: 'Control+Alt+R', shortcutWanted: 'Control+Alt+R' }), onProgress() {}, onSettings() {}, onUpdate() {}, onShortcutError(){}, shortcutCapture: async () => {},
+    onCallOffer: fn => { listeners.offer = fn; }, onCallDetectionError: fn => { listeners.error = fn; },
+    acceptCall: async id => { calls.push('accept-' + id); return true; },
+    dismissCall: async id => { calls.push('dismiss-' + id); }, setCallDetection: async () => {},
     start: async value => { calls.push('start-' + value); return 'id'; },
     samples: async (_,bytes) => { assert.equal(bytes.byteLength,4); calls.push('write'); },
     stop: async () => calls.push('stop'), nextPart: async () => { calls.push('prepare'); return { name:'part-000001.wav', index:1, total:1 }; },
@@ -58,13 +62,14 @@ async function studio(mode, { systemAllowed = true, automatic = false, start = t
     },
     async getUserMedia() { calls.push('input'); return source('microphone'); }
   };
-  const document = { getElementById: element, querySelector: () => ({value:mode}), createElement: () => element(Symbol()) };
+  const callRadio = { set checked(value) { if (value) mode = 'call'; } };
+  const document = { getElementById: element, querySelector: selector => selector.includes('value=call') ? callRadio : ({value:mode}), createElement: () => element(Symbol()) };
   vm.runInNewContext(renderer,{ document, window:{sonat:api}, navigator:{mediaDevices:devices}, AudioContext:Context,
     MediaStream:class { constructor(tracks) { this.tracks = tracks; } }, AudioWorkletNode:Worklet,
     setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array });
   await new Promise(resolve => setImmediate(resolve));
   if (start) await element('record').onclick();
-  return { calls, streams, element };
+  return { calls, streams, element, listeners };
 }
 
 test('call button requests two inputs and saves tail before preparing a private ChatGPT handoff', async () => {
@@ -154,4 +159,119 @@ test('direct capture commits right Option + right Shift once, after release, in 
   panel.onkeyup(event('KeyK'));
   await panel.onkeyup(event('AltLeft'));
   assert.equal(values.at(-1), 'Alt+K');
+});
+
+
+test('call offers stay manual, skip once, then start call even when dictaphone was selected', async () => {
+  const s = await studio('mic', { start:false });
+  s.listeners.offer({id:'first', label:'Google Meet'});
+  assert.equal(s.element('callOffer').hidden, false);
+  assert.equal(s.element('callOfferLabel').textContent, 'Google Meet');
+  assert.equal(s.element('callRecord').dataset.offerId, 'first');
+  assert.deepEqual(s.calls, []);
+  await s.element('callSkip').onclick();
+  assert.equal(s.element('callOffer').hidden, true);
+  await s.element('callSkip').onclick();
+  assert.deepEqual(s.calls, ['dismiss-first']);
+  s.listeners.offer({id:'second', label:'Zoom'});
+  const pending = s.element('callRecord').onclick();
+  // No IPC await may separate the real click from getDisplayMedia.
+  assert.deepEqual(s.calls, ['dismiss-first', 'accept-second', 'display']);
+  await pending;
+  assert.ok(s.calls.includes('start-call'));
+  assert.equal(s.calls.includes('start-mic'), false);
+  assert.equal(s.element('sourceHint').textContent, 'Микрофон + компьютер');
+  await s.element('record').onclick();
+});
+
+test('stale acknowledgement releases capture without starting or stopping any recording', async () => {
+  const s = await studio('mic', { start:false, overrides: { acceptCall: async () => false } });
+  s.listeners.offer({id:'old', label:'Zoom'});
+  await s.element('callRecord').onclick();
+  assert.deepEqual(s.calls, ['display']);
+  assert.ok(s.streams.every(stream => stream.getAudioTracks()[0].readyState === 'ended'));
+  assert.match(s.element('status').textContent, /неактуально/);
+});
+
+test('offer clicks while starting or recording never toggle recording off', async () => {
+  let accept;
+  const s = await studio('mic', { start:false, overrides: { acceptCall: () => new Promise(resolve => { accept = resolve; }) } });
+  s.listeners.offer({id:'one', label:'Zoom'});
+  const pending = s.element('callRecord').onclick();
+  await s.element('callRecord').onclick();
+  await s.element('record').onclick();
+  assert.deepEqual(s.calls, ['display']);
+  accept(true);
+  await pending;
+  s.listeners.offer({id:'two', label:'Meet'});
+  await s.element('callRecord').onclick();
+  assert.equal(s.calls.includes('stop'), false);
+  assert.equal(s.calls.filter(c => c === 'start-call').length, 1);
+  await s.element('record').onclick();
+});
+
+test('settings and unfinished review preserve work when an offer is clicked', async () => {
+  const s = await studio('mic', {start:false});
+  s.listeners.offer({id:'one', label:'Zoom'});
+  s.element('settingsButton').onclick();
+  await s.element('callRecord').onclick();
+  assert.deepEqual(s.calls, []);
+  s.element('closeSettings').onclick();
+  await s.element('record').onclick();
+  await s.element('record').onclick();
+  s.element('answer').value = 'Черновик';
+  await s.element('callRecord').onclick();
+  assert.equal(s.element('answer').value, 'Черновик');
+  assert.equal(s.element('review').hidden, false);
+  assert.equal(s.calls.includes('start-call'), false);
+  assert.match(s.element('callOfferHint').textContent, /Сначала сохраните/);
+});
+
+test('call offer preference is on by default, saved explicitly, and reports detection errors', async () => {
+  let enabled = true;
+  const s = await studio('mic', {start:false, overrides: {
+    info: async () => ({ folder:'/test', pending:[], callDetection:enabled, callOffer:{id:'one',label:'Zoom'} }),
+    setCallDetection: async value => { enabled = value; }
+  }});
+  assert.equal(s.element('callDetection').checked, true);
+  s.listeners.error('Не удалось проверить звонок.');
+  assert.equal(s.element('callDetectionStatus').textContent, 'Не удалось проверить звонок.');
+  s.element('callDetection').checked = false;
+  await s.element('callDetection').onchange();
+  assert.equal(enabled, false);
+  assert.equal(s.element('callOffer').hidden, true);
+  await s.element('callRecord').onclick();
+  assert.deepEqual(s.calls, []);
+});
+
+
+test('choosing the first folder keeps the offer and requires a second real click for capture', async () => {
+  let folder = '';
+  const s = await studio('mic', {start:false, overrides: {
+    info: async () => ({ folder, pending:[], callDetection:true, callOffer:{id:'one',label:'Zoom'} }),
+    folder: async () => { folder = '/test'; }
+  }});
+  await s.element('callRecord').onclick();
+  assert.deepEqual(s.calls, []);
+  assert.equal(s.element('callOffer').hidden, false);
+  await s.element('callRecord').onclick();
+  assert.ok(s.calls.includes('start-call'));
+  await s.element('record').onclick();
+});
+
+test('failed offer acknowledgement cleans up capture; failed preference restores the checkbox', async () => {
+  const s = await studio('mic', {start:false, overrides: {
+    acceptCall: async () => { throw new Error('Предложение недоступно.'); },
+    setCallDetection: async () => { throw new Error('Не удалось сохранить настройку.'); }
+  }});
+  s.listeners.offer({id:'one',label:'Zoom'});
+  await s.element('callRecord').onclick();
+  assert.deepEqual(s.calls, ['display']);
+  assert.ok(s.streams.every(stream => stream.getAudioTracks()[0].readyState === 'ended'));
+  assert.match(s.element('status').textContent, /Предложение недоступно/);
+  s.element('callDetection').checked = false;
+  await s.element('callDetection').onchange();
+  assert.equal(s.element('callDetection').checked, true);
+  assert.equal(s.element('callDetection').disabled, false);
+  assert.match(s.element('callDetectionStatus').textContent, /Не удалось сохранить/);
 });

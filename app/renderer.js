@@ -5,6 +5,7 @@ let prefs = { folder: '', pending: [] };
 let phase = 'idle';
 let live = null;
 let reviewing = null;
+let callOffer = null;
 
 function status(text) {
   $('status').textContent = text;
@@ -28,6 +29,7 @@ function controls(next) {
   $('record').classList.toggle('recording', phase === 'recording');
   for (const id of ['modes','folder','apiKey','enableApi','disableApi','editShortcut','clearShortcut','updateApp']) $(id).disabled = !idle;
   for (const b of $('list').querySelectorAll('button')) b.disabled = !idle;
+  showCallOffer();
 }
 async function refresh() {
   prefs = await api.info();
@@ -39,6 +41,10 @@ async function refresh() {
   $('apiKey').placeholder = prefs.automatic ? 'Сохранённый ключ · введите новый для замены' : 'Ключ проекта';
   $('appVersion').textContent = 'Sonat ' + (prefs.version || '');
   showApiState();
+  $('callDetection').checked = prefs.callDetection !== false;
+  $('callDetectionStatus').textContent = prefs.callDetectionError || '';
+  callOffer = prefs.callOffer || null;
+  showCallOffer();
   $('list').replaceChildren();
   for (const id of prefs.pending) {
     const li = document.createElement('li');
@@ -61,6 +67,44 @@ $('modes').onchange = () => {
   $('systemLabel').hidden = mic;
   $('sourceHint').textContent = mic ? 'Только микрофон' : 'Микрофон + компьютер';
 };
+function showCallOffer() {
+  $('callOffer').hidden = !callOffer || prefs.callDetection === false;
+  $('callOfferLabel').textContent = callOffer?.label || '';
+  $('callRecord').dataset.offerId = callOffer?.id || '';
+  $('callRecord').disabled = !callOffer || phase !== 'idle' || $('settingsPanel').open;
+  $('callSkip').disabled = !callOffer;
+  $('callOfferHint').textContent = phase === 'review' ? 'Сначала сохраните текст или нажмите «Продолжить позже».'
+    : phase !== 'idle' ? 'Предложение доступно после завершения текущего действия.'
+    : $('settingsPanel').open ? 'Закройте настройки, чтобы начать запись.' : '';
+}
+api.onCallOffer(offer => { callOffer = offer; showCallOffer(); });
+api.onCallDetectionError(text => {
+  prefs.callDetectionError = text;
+  $('callDetectionStatus').textContent = text || '';
+});
+$('callSkip').onclick = () => guarded(async () => {
+  const id = callOffer?.id;
+  if (!id) return;
+  callOffer = null;
+  showCallOffer();
+  await api.dismissCall(id);
+});
+$('callRecord').onclick = () => guarded(() => {
+  if (!callOffer || prefs.callDetection === false || phase !== 'idle' || $('settingsPanel').open) return;
+  const offerId = callOffer.id;
+  document.querySelector('input[name=mode][value=call]').checked = true;
+  $('modes').onchange();
+  return start({ offerId });
+});
+$('callDetection').onchange = () => guarded(async () => {
+  $('callDetection').disabled = true;
+  try { await api.setCallDetection($('callDetection').checked); await refresh(); }
+  catch (e) {
+    $('callDetection').checked = prefs.callDetection !== false;
+    $('callDetectionStatus').textContent = message(e);
+  }
+  finally { $('callDetection').disabled = false; }
+});
 let listening = false;
 const sides = ['ControlLeft', 'ControlRight', 'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight', 'MetaLeft', 'MetaRight'];
 const symbols = { Command: '⌘', Alt: '⌥', Control: '⌃', Shift: '⇧', Space: 'Пробел' };
@@ -98,6 +142,7 @@ function openSettings() {
   if ($('settingsPanel').open) return;
   $('settingsStatus').textContent = '';
   $('settingsPanel').showModal();
+  showCallOffer();
 }
 $('settingsButton').onclick = openSettings;
 api.onSettings(openSettings);
@@ -107,6 +152,7 @@ $('settingsPanel').onclose = () => {
   endCapture();
   $('apiKey').value = '';
   shortcutLabels();
+  showCallOffer();
 };
 $('editShortcut').onclick = async () => {
   resetChord();
@@ -313,7 +359,8 @@ function interrupt(s, why) {
   if (!s.fault) s.fault = why;
   if (live === s && phase === 'recording') guarded(() => stop(s));
 }
-async function start() {
+async function start({ offerId } = {}) {
+  if (phase !== 'idle') return;
   if (!prefs.folder) {
     controls('choosing');
     try { await api.folder(); await refresh(); } finally { controls('idle'); }
@@ -326,11 +373,21 @@ async function start() {
   live = s;
   controls('starting');
   status('Подключаю звук…');
-  const call = mode() === 'call';
+  const call = offerId ? true : mode() === 'call';
   try {
+    // Begin capture in the click's user activation, without awaiting the IPC acknowledgement.
+    // A failed/stale acknowledgement is checked before creating any recording on disk.
+    const acceptance = offerId ? Promise.resolve(api.acceptCall(offerId)).then(
+      accepted => ({ accepted }), error => ({ error })) : null;
     if (call) {
       const system = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: { frameRate: 1 }, systemAudio: 'include' });
       s.streams.push(system);
+      if (acceptance) {
+        const result = await acceptance;
+        if (result.error) throw result.error;
+        if (!result.accepted) throw new Error('Звонок уже завершён или предложение больше неактуально.');
+        if (callOffer?.id === offerId) { callOffer = null; showCallOffer(); }
+      }
       if (system.getAudioTracks()[0]?.readyState !== 'live') throw new Error('Включите для Sonat запись системного звука в настройках macOS.');
       for (const t of system.getVideoTracks()) t.stop();
     }

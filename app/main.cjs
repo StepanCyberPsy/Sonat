@@ -6,6 +6,7 @@ const { Recording, pending, nextPart, savePart, sessionDir, saveJSON } = require
 
 const { transcribe, checkConnection } = require('./transcription.cjs');
 
+const { setupCallPrompts } = require('./call-prompts.cjs');
 const { Updater } = require('./updates.cjs');
 const { RecordShortcut, createMacModifierRegistry, modifierMask } = require('./shortcuts.cjs');
 
@@ -14,6 +15,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'sonat', privileges: { standard:
 const page = 'sonat://studio/index.html';
 let win, settingsFile, active, operation = '', writeError;
 let settings = {};
+let quitting = false;
 let writeQueue = Promise.resolve();
 
 function trusted(event) {
@@ -100,6 +102,7 @@ async function setup() {
   });
   const shortcut = new RecordShortcut(globalShortcut, toggleFromKeyboard, { modifierRegistry });
   const updater = new Updater({ app });
+  let callPrompts;
   handle('update-app', () => exclusive('update', async () => {
     const state = await updater.check();
     if (state.state === 'current') return 'Установлена последняя версия Sonat ' + state.currentVersion + '.';
@@ -110,7 +113,7 @@ async function setup() {
   handle('set-shortcut', value => exclusive('shortcut', () => shortcut.change(value,
     key => configure({ shortcut: key }))));
   handle('info', async () => ({
-    version: app.getVersion(),
+    ...callPrompts.info(), version: app.getVersion(),
     shortcut: modifierMask(shortcut.active) && !modifierRegistry.isRegistered(shortcut.active) ? '' : shortcut.active,
     shortcutWanted: shortcut.requested,
     folder: settings.folder || '', automatic: Boolean(settings.apiKey), apiCheck: settings.apiCheck || null,
@@ -130,6 +133,7 @@ async function setup() {
     if (!settings.folder) throw new Error('Выберите папку для расшифровок.');
     if (!['call', 'mic'].includes(mode)) throw new Error('Выберите режим записи.');
     active = await Recording.create(settings.folder, mode);
+    callPrompts.suppress();
     writeError = null;
     writeQueue = Promise.resolve();
     return active.id;
@@ -187,7 +191,7 @@ async function setup() {
   handle('open-chat', () => shell.openExternal('https://chatgpt.com/'));
   handle('copy-prompt', () => clipboard.writeText('Расшифруй прикреплённую аудиозапись дословно на языке разговора. Разделяй реплики абзацами. Неразборчивые места отмечай [неразборчиво]. Верни только расшифровку.'));
 
-  const assets = new Set(['/index.html', '/style.css', '/renderer.js', '/worklet.js', '/sonat.png']);
+  const assets = new Set(['/index.html', '/style.css', '/renderer.js', '/worklet.js', '/sonat.png', '/call-popup.html', '/call-popup.js', '/call-popup.css']);
   protocol.handle('sonat', request => {
     const url = new URL(request.url);
     if (url.hostname !== 'studio' || !assets.has(url.pathname)) return new Response(null, { status: 404 });
@@ -197,8 +201,12 @@ async function setup() {
     width: 720, height: 800, minWidth: 500, minHeight: 560, title: 'Sonat',
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false }
   });
+  callPrompts = setupCallPrompts({ win, page, handle, isBusy: () => Boolean(active || operation),
+    isRecording: () => Boolean(active), enabled: () => settings.callDetection !== false,
+    saveEnabled: value => exclusive('settings', () => configure({ callDetection: value }))
+  });
   await shortcut.restore(settings.shortcut);
-  app.on('will-quit', () => { shortcut.destroy(); globalShortcut.unregisterAll(); });
+  app.on('will-quit', () => { callPrompts.destroy(); shortcut.destroy(); globalShortcut.unregisterAll(); });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Sonat', submenu: [{ role: 'about', label: 'О Sonat' }, { type: 'separator' }, { label: 'Настройки…', accelerator: 'Command+,', click: () => { win.show(); win.webContents.send('settings'); } }, { type: 'separator' }, { role: 'hide', label: 'Скрыть Sonat' }, { role: 'quit', label: 'Завершить Sonat' }] },
     { label: 'Правка', submenu: [{ role: 'cut', label: 'Вырезать' }, { role: 'copy', label: 'Скопировать' }, { role: 'paste', label: 'Вставить' }, { role: 'selectAll', label: 'Выделить всё' }] },
@@ -217,7 +225,11 @@ async function setup() {
   win.on('close', event => {
     if (active || (operation && updater.status().state !== 'restarting')) {
       event.preventDefault();
+      quitting = false;
       dialog.showMessageBoxSync(win, { message: active ? 'Сначала остановите запись.' : 'Дождитесь завершения операции.' });
+    } else if (!quitting && settings.callDetection !== false) {
+      event.preventDefault();
+      win.hide();
     }
   });
   win.webContents.on('render-process-gone', async () => {
@@ -231,6 +243,8 @@ async function setup() {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (win) { win.restore(); win.show(); win.focus(); } });
+  app.on('before-quit', () => { quitting = true; });
+  app.on('activate', () => { if (win && !win.isDestroyed()) { win.show(); win.focus(); } });
   app.on('window-all-closed', () => app.quit());
   app.whenReady().then(setup).catch(e => { dialog.showErrorBox('Sonat', e.message); app.quit(); });
 }

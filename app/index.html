@@ -4,6 +4,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Sonat</title><link rel="stylesheet" href="style.css"></head>
 <body><main>
 <header class="top"><h1><img src="sonat.png" width="40" height="40" alt="">Sonat</h1><button id="settingsButton" type="button">Настройки</button></header>
+<section class="card callOffer" id="callOffer" aria-labelledby="callOfferTitle" hidden>
+<div role="status"><h2 id="callOfferTitle">Похоже, начался звонок</h2><p id="callOfferLabel"></p></div>
+<p class="muted">Записать микрофон и звук собеседников? Запись начнётся только после вашего нажатия.</p>
+<div class="row"><button id="callRecord" class="primary">Записать</button><button id="callSkip">Пропустить</button></div>
+<p class="muted" id="callOfferHint"></p></section>
 <section class="recorder" aria-label="Запись">
 <fieldset id="modes"><legend>Источник записи</legend><div class="segments"><label><input type="radio" name="mode" value="call" checked><span>Звонок</span></label><label><input type="radio" name="mode" value="mic"><span>Диктофон</span></label></div></fieldset>
 <div id="console" class="console"><div class="consoleHead"><strong id="stage">Готов к записи</strong><span id="sourceHint">Микрофон + компьютер</span></div>
@@ -21,6 +26,9 @@
 <section class="card" id="queue" hidden><h2>Ожидают расшифровки</h2><ul id="list"></ul></section>
 </main>
 <dialog id="settingsPanel" aria-labelledby="settingsTitle"><div class="sectionHead"><h2 id="settingsTitle">Настройки</h2><button id="closeSettings">Готово</button></div>
+<section><h3>Предложения записи</h3><label class="check"><input id="callDetection" type="checkbox" checked> Предлагать запись звонков</label>
+<p class="muted">Когда начинается звонок, Sonat предлагает включить запись. Решение всегда за вами.</p>
+<p class="muted" id="callDetectionStatus" role="status"></p></section>
 <section><h3>Горячая клавиша записи</h3><p>Одно сочетание запускает и останавливает запись, пока Sonat открыт.</p>
 <div class="row"><button id="editShortcut" aria-describedby="shortcutHelp">Назначить сочетание</button><button id="clearShortcut">Отключить</button></div>
 <div class="row" id="shortcutEditor" hidden><kbd id="capturedKeys" tabindex="-1">Нажмите клавиши…</kbd><button id="cancelShortcut">Отмена</button></div>

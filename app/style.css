@@ -49,3 +49,10 @@ textarea { resize: vertical; } [hidden] { display: none !important; }
 #apiState.success { color: var(--accent); }
 #apiState.error { color: #9c3526; }
 @media (prefers-color-scheme: dark) { #apiState.error { color: #ffa696; } }
+
+.callOffer { border: 2px solid var(--accent); margin: 0 0 22px; background: var(--paper); box-shadow: 0 4px 18px #16584412; }
+.callOffer h2 { color: var(--accent); }
+#callOfferLabel { font-weight: 550; overflow-wrap: anywhere; }
+.callOffer .row { margin-top: 12px; }
+.check { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.check input { accent-color: var(--accent); width: 17px; height: 17px; }

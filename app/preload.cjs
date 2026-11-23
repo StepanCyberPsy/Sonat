@@ -1,5 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('sonat', {
+  onCallOffer: fn => ipcRenderer.on('call-offer', (_, offer) => fn(offer)),
+  onCallDetectionError: fn => ipcRenderer.on('call-detection-error', (_, text) => fn(text)),
+  setCallDetection: enabled => ipcRenderer.invoke('set-call-detection', enabled),
+  dismissCall: id => ipcRenderer.invoke('dismiss-call', id),
+  acceptCall: id => ipcRenderer.invoke('accept-call', id),
   info: () => ipcRenderer.invoke('info'),
   setShortcut: value => ipcRenderer.invoke('set-shortcut', value),
   onShortcutError: fn => ipcRenderer.on('shortcut-error', (_, message) => fn(message)),

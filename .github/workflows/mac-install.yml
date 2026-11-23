@@ -4,7 +4,10 @@ on:
     branches: [main]
     paths:
       - 'Установить Sonat.command'
-      - 'app/sonat.png'
+      - 'app/**'
+      - 'native/**'
+      - 'scripts/**'
+      - 'package.json'
       - 'test/macos-icon.swift'
       - '.github/workflows/mac-install.yml'
 permissions:
@@ -20,7 +23,9 @@ jobs:
       - name: Check the macOS modifier monitor
         run: node test/macos-modifiers.cjs
       - name: Install using the downloaded distribution
-        run: './Установить\ Sonat.command --no-open'
+        run: SONAT_BUILD_FROM_SOURCE=1 './Установить Sonat.command' --no-open
+      - name: Verify packaged native call probe
+        run: node scripts/smoke-call-probe.cjs "$HOME/Applications/Sonat.app"
       - name: Verify installed app and open the recording window
         shell: bash
         run: |
