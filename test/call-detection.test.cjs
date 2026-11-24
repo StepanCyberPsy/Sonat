@@ -53,3 +53,27 @@ test('a stale click or a long Mac sleep cannot accept a previous call', () => {
   assert.notEqual(state.offer.id,old);
   state.clear(); assert.equal(state.consume(old),false);
 });
+
+test('end follows the bound call, requires healthy consecutive absences, survives mute and sleep', () => {
+  const {RecordedCall} = require('../app/call-detection.cjs');
+  const call = new RecordedCall('record', 'us.zoom.xos');
+  const tick = (time, processes, meetings = [], status = 'ok') => call.observe({processes, meetings, status}, time);
+  const meeting = {appBundleId:'us.zoom.xos', service:'zoom', topic:'Планирование'};
+  assert.equal(tick(0, [zoom], [meeting]), false);
+  assert.equal(call.title, 'Планирование');
+  for (const t of [3000,6000,9000,12000,15000,18000]) assert.equal(tick(t, [], [meeting]), false);
+  assert.equal(tick(21000, []), false);
+  assert.equal(tick(24000, [], [], 'partial'), false);
+  assert.equal(tick(90000, []), false);
+  for (const t of [93000,96000,99000,102000,105000]) assert.equal(tick(t,[chromium]), false);
+  assert.equal(tick(108000,[chromium]), true);
+});
+
+test('unrecognized and window-only calls do not end on missing audio', () => {
+  const { RecordedCall } = require('../app/call-detection.cjs');
+  const call = new RecordedCall('record');
+  call.observe({ status:'ok', processes:[zoom,chromium] },0);
+  assert.equal(call.key,'');
+  call.observe({ status:'ok', meetings:[{appBundleId:'us.zoom.xos',service:'zoom'}] },3000);
+  for (let t=6000;t<45000;t+=3000) assert.equal(call.observe({status:'ok', processes:[], meetings:[]},t), false);
+});

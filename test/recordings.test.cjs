@@ -67,3 +67,18 @@ test('empty pasted text does not complete the part', async t => {
   await assert.rejects(savePart(folder, r.id, part.name, '   '), /Вставьте/);
   assert.deepEqual(await nextPart(folder, r.id), part);
 });
+
+test('named folders survive restart, resume and publish a recognizable transcript', async t => {
+  const { nameRecording, cleanTitle } = require('../app/recordings.cjs');
+  const { folder, r } = await session(t);
+  await r.append(Buffer.alloc(3200)); await r.finish();
+  const named = await nameRecording(folder, r.id, 'Обзор / квартала');
+  assert.deepEqual(await pending(folder), [named]);
+  const changed = await nameRecording(folder, named, 'План команды');
+  assert.equal(await cleanTitle('  / :  '), '');
+  assert.ok(Buffer.byteLength(cleanTitle('😀'.repeat(200))) <= 144);
+  const {name} = await nextPart(folder, changed);
+  const {file} = await savePart(folder, changed, name, 'Обсуждение');
+  assert.ok(file.startsWith('План команды — '));
+  assert.equal(await fs.readFile(path.join(folder,file),'utf8'), 'Обсуждение\n');
+});

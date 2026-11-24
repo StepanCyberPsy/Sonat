@@ -1,9 +1,10 @@
 const path = require('node:path');
 const { BrowserWindow, ipcMain, screen } = require('electron');
-const { CallOffers, watchCalls } = require('./call-detection.cjs');
+const { CallOffers, RecordedCall, watchCalls } = require('./call-detection.cjs');
 
 function setupCallPrompts({ win, page, handle, isBusy, isRecording, enabled, saveEnabled }) {
   let popup = null, stopWatching = null, errorText = '';
+  let tracked, latest, accepted;
   const send = (channel, value) => {
     if (!win.isDestroyed() && win.webContents.getURL() === page) win.webContents.send(channel, value);
   };
@@ -67,16 +68,22 @@ function setupCallPrompts({ win, page, handle, isBusy, isRecording, enabled, sav
   ipcMain.on('call-popup-choice', choose);
   win.on('focus', closePopup);
   function start() {
-    if (stopWatching || !enabled()) return;
+    if (stopWatching || (!enabled() && !tracked)) return;
     const exe = path.resolve(process.resourcesPath, '../Helpers/SonatCallProbe');
     stopWatching = watchCalls(exe, sample => {
       setError(sample.status === 'error' ? 'macOS не предоставила сведения об аудиоустройствах.' : '');
-      offers.update(sample, isRecording());
-    }, text => { setError(text); offers.hide(); });
+      latest = { sample, time: Date.now() };
+      if (tracked && !tracked.ended && tracked.observe(sample, latest.time)) {
+        tracked.ended = true;
+        send('call-ended', tracked.id);
+      }
+      if (enabled()) offers.update(sample, isRecording());
+    }, text => { latest = null; if (tracked) tracked.last = null; setError(text); offers.hide(); });
   }
   function stop() {
     stopWatching?.();
     stopWatching = null;
+    latest = accepted = null;
     offers.clear();
     setError('');
     closePopup();
@@ -84,15 +91,39 @@ function setupCallPrompts({ win, page, handle, isBusy, isRecording, enabled, sav
   handle('set-call-detection', async value => {
     if (typeof value !== 'boolean') throw new Error('Некорректная настройка.');
     await saveEnabled(value);
-    if (value) start(); else stop();
+    if (value) start(); else if (tracked) offers.clear(); else stop();
   });
   handle('dismiss-call', id => offers.consume(id));
-  handle('accept-call', id => enabled() && !isBusy() && offers.consume(id));
+  handle('accept-call', id => {
+    const key = offers.offer?.key;
+    if (!enabled() || isBusy() || !offers.consume(id)) return false;
+    accepted = { id, key };
+    return true;
+  });
   start();
   return {
     info: () => ({ callDetection: enabled(), callDetectionError: errorText,
       callOffer: offers.offer ? { id: offers.offer.id, label: offers.offer.label } : null }),
-    suppress: () => offers.hide(),
+    begin(id, mode, offerId) {
+      offers.hide();
+      if (mode === 'call') {
+        tracked = new RecordedCall(id, accepted && accepted.id === offerId ? accepted.key : '');
+        if (latest && Date.now() - latest.time < 8000) tracked.observe(latest.sample, latest.time);
+        start();
+      }
+      accepted = null;
+    },
+    end() {
+      const title = tracked?.title || '';
+      if (tracked?.ended && !win.isDestroyed()) {
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+      }
+      tracked = null;
+      if (!enabled()) stop();
+      return title;
+    },
     destroy() { stop(); ipcMain.removeListener('call-popup-choice', choose); win.removeListener('focus', closePopup); }
   };
 }

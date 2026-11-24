@@ -110,12 +110,13 @@ static BOOL Match(NSString *title, NSString *pattern) {
 }
 
 // These are hints about a meeting room, not proof that the user has joined.
-// Never return the matched text, URLs, room codes, participants, or window IDs.
+// Extract a local naming suggestion only from recognized meeting-title formats.
 static NSString *MeetingService(NSString *rawTitle, NSString *bundleID) {
     NSString *title = [rawTitle stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (!title.length || title.length > 2048) return nil;
     NSString *bid = bundleID.lowercaseString ?: @"";
     BOOL zoom = [bid hasPrefix:@"us.zoom."];
+    if (zoom && Match(title, @"^(zoom meeting|zoom webinar|конференция zoom|вебинар zoom)\\s*[:—–|\\-]\\s*.+$|^.+\\s[—–|\\-]\\s(zoom meeting|zoom webinar|конференция zoom|вебинар zoom)$")) return @"zoom";
     if (zoom && Match(title, @"^(zoom meeting|zoom webinar|конференция zoom|вебинар zoom)$")) return @"zoom";
     BOOL browser = [@[@"com.apple.safari", @"com.google.chrome", @"com.google.chrome.canary", @"com.microsoft.edgemac",
         @"org.mozilla.firefox", @"com.brave.browser", @"com.operasoftware.opera", @"company.thebrowser.browser",
@@ -136,6 +137,20 @@ static NSString *MeetingService(NSString *rawTitle, NSString *bundleID) {
     return nil;
 }
 
+static NSString *MeetingTopic(NSString *title, NSString *service) {
+    if ([service isEqualToString:@"google-meet"]) return nil; // Room codes carry no useful name.
+    NSString *name = [title stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    NSArray *patterns = @[
+        @"\\s+[—–|\\-]\\s+(Google Chrome|Safari|Microsoft Edge|Mozilla Firefox|Brave|Opera|Chromium|Vivaldi|Arc|Яндекс Браузер|Yandex Browser)$",
+        @"^(Zoom Meeting|Zoom Webinar|Конференция Zoom|Вебинар Zoom|Meeting|Webinar|Call|Встреча|Конференция|Вебинар|Звонок|Собрание)\\s*[:—–|\\-]\\s*",
+        @"\\s+[—–|\\-]\\s+(Zoom Meeting|Zoom Webinar|Конференция Zoom|Вебинар Zoom|Microsoft Teams|Teams|(Яндекс[ .])?Телемост|МТС Линк|MTS Link|Jitsi Meet)$"
+    ];
+    for (NSString *pattern in patterns)
+        name = [name stringByReplacingOccurrencesOfString:pattern withString:@"" options:NSRegularExpressionSearch | NSCaseInsensitiveSearch range:NSMakeRange(0, name.length)];
+    if (!name.length || name.length > 120 || Match(name, @"https?://|www\\.|^[0-9 -]+$|^(Zoom Meeting|Zoom Webinar|Конференция Zoom|Вебинар Zoom)$")) return nil;
+    return name;
+}
+
 static NSArray *Meetings(NSArray<NSRunningApplication *> *running) {
     NSArray *windows = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID));
     NSMutableArray *meetings = [NSMutableArray array];
@@ -154,8 +169,11 @@ static NSArray *Meetings(NSArray<NSRunningApplication *> *running) {
         NSString *key = [NSString stringWithFormat:@"%d:%@", pid, service];
         if ([seen containsObject:key]) continue;
         [seen addObject:key];
-        [meetings addObject:@{ @"appPid": identity[@"appPid"] == Null() ? @(pid) : identity[@"appPid"],
-            @"appBundleId": bundle ?: Null(), @"service": service }];
+        NSMutableDictionary *meeting = [@{ @"appPid": identity[@"appPid"] == Null() ? @(pid) : identity[@"appPid"],
+            @"appBundleId": bundle ?: Null(), @"service": service } mutableCopy];
+        NSString *topic = MeetingTopic(title, service);
+        if (topic) meeting[@"topic"] = topic;
+        [meetings addObject:meeting];
     }
     return meetings;
 }
@@ -226,6 +244,10 @@ static int SelfTest(void) {
         && [MeetingService(@"Встреча: Пример — Телемост", @"com.apple.Safari") isEqual:@"telemost"]
         && [MeetingService(@"Meeting: Example | Microsoft Teams", @"com.microsoft.teams2") isEqual:@"teams"]
         && [MeetingService(@"Example | Jitsi Meet", @"org.mozilla.firefox") isEqual:@"jitsi"]
+        && [MeetingService(@"Roadmap — Zoom Meeting", @"us.zoom.xos") isEqual:@"zoom"]
+        && [MeetingTopic(@"Roadmap — Zoom Meeting", @"zoom") isEqual:@"Roadmap"]
+        && [MeetingTopic(@"Встреча: План — МТС Линк — Safari", @"mts-link") isEqual:@"План"]
+        && !MeetingTopic(@"Zoom Meeting", @"zoom")
         && !MeetingService(@"Zoom Workplace", @"us.zoom.xos")
         && !MeetingService(@"Google Meet", @"com.google.Chrome")
         && !MeetingService(@"Телемост — видеовстречи онлайн", @"com.apple.Safari")

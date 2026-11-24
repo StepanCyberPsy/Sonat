@@ -6,7 +6,38 @@ const RATE = 16000;
 const PART_BYTES = RATE * 2 * 60 * 4;
 const archive = 'Аудио Sonat';
 const partPattern = /^part-\d{6}\.wav$/;
-const sessionPattern = /^Sonat \d{4}-\d\d-\d\d \d\d-\d\d-\d\d (Звонок|Диктофон) [a-f0-9]{8}$/;
+const basePattern = /^Sonat \d{4}-\d\d-\d\d \d\d-\d\d-\d\d (Звонок|Диктофон) [a-f0-9]{8}$/;
+
+function cleanTitle(value) {
+  if (typeof value !== 'string') return '';
+  const cleaned = value.normalize('NFC').replace(/[\\/:\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^[. ]+|[. ]+$/g, '');
+  let result = '';
+  for (const ch of cleaned) {
+    if (Buffer.byteLength(result + ch) > 144) break;
+    result += ch;
+  }
+  return result.trimEnd().replace(/[. ]+$/, '');
+}
+function validSession(id) {
+  if (typeof id !== 'string') return false;
+  const split = id.indexOf(' — ');
+  if (split < 0) return basePattern.test(id);
+  const title = id.slice(split + 3);
+  return basePattern.test(id.slice(0, split)) && !!title && cleanTitle(title) === title.normalize('NFC');
+}
+async function nameRecording(folder, id, value) {
+  const dir = sessionDir(folder, id);
+  const title = cleanTitle(value);
+  if (!title) throw Error('Введите название с буквами или цифрами либо оставьте дату.');
+  const base = id.split(' — ')[0];
+  const next = base + ' — ' + title;
+  if (id === next) return id;
+  if (await exists(path.join(dir, 'finished.json'))) throw Error('Текст этой записи уже сохранён.');
+  const destination = sessionDir(folder, next);
+  if (await exists(destination)) throw Error('Папка с таким названием уже существует.');
+  await fs.rename(dir, destination);
+  return next;
+}
 
 function header(bytes) {
   const h = Buffer.alloc(44);
@@ -28,7 +59,7 @@ async function writeAll(file, buffer, at) {
 }
 
 function sessionDir(folder, id) {
-  if (!sessionPattern.test(id)) throw new Error('Неизвестная запись.');
+  if (!validSession(id)) throw new Error('Неизвестная запись.');
   return path.join(folder, archive, id);
 }
 
@@ -87,7 +118,7 @@ async function pending(folder) {
   const entries = await fs.readdir(root, { withFileTypes: true });
   const result = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || !sessionPattern.test(entry.name)) continue;
+    if (!entry.isDirectory() || !validSession(entry.name)) continue;
     const dir = sessionDir(folder, entry.name);
     if (await exists(path.join(dir, 'finished.json'))) continue;
     if ((await fs.readdir(dir)).some(name => partPattern.test(name))) result.push(entry.name);
@@ -138,8 +169,10 @@ async function nextPart(folder, id) {
   // A prior run may have published the TXT just before it was interrupted.
   const staged = path.join(dir, 'transcript.tmp');
   await fs.writeFile(staged, transcript, { mode: 0o600 });
+  const split = id.indexOf(' — ');
+  const filename = split < 0 ? id : id.slice(split + 3) + ' — ' + id.slice(0, split);
   for (let copy = 0; ; copy++) {
-    const file = id + (copy ? ' (' + copy + ')' : '') + '.txt';
+    const file = filename + (copy ? ' (' + copy + ')' : '') + '.txt';
     const target = path.join(folder, file);
     try {
       await fs.copyFile(staged, target, fs.constants.COPYFILE_EXCL);
@@ -163,4 +196,4 @@ async function savePart(folder, id, name, text) {
   await saveJSON(cache, { text: text.trim() });
   return nextPart(folder, id);
 }
-module.exports = { Recording, pending, nextPart, savePart, sessionDir, saveJSON, PART_BYTES, RATE };
+module.exports = { Recording, nameRecording, cleanTitle, pending, nextPart, savePart, sessionDir, saveJSON, PART_BYTES, RATE };

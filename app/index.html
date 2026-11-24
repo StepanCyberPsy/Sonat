@@ -38,4 +38,9 @@
 <div class="row"><button id="enableApi">Проверить и сохранить</button><button id="disableApi" hidden>Отключить и забыть ключ</button></div>
 <p class="muted">Для проверки Sonat отправляет в OpenAI короткую встроенную тестовую фразу. Проверка и расшифровка записей расходуют кредиты API.</p><p id="settingsStatus" role="status"></p></section>
 <section><h3>Обновления</h3><div class="row"><span id="appVersion"></span><button id="updateApp">Обновить Sonat</button></div><p class="muted" id="updateStatus" role="status"></p></section></dialog>
+<dialog id="namePanel" aria-labelledby="nameHeading"><form id="nameForm">
+<h2 id="nameHeading">Как назвать запись?</h2><label for="recordingName">Название</label>
+<input id="recordingName" type="text" maxlength="100" placeholder="Например, Планирование недели" autocomplete="off">
+<p id="nameHint" class="muted" role="status"></p><div class="row"><button class="primary" type="submit">Сохранить</button>
+<button type="button" id="keepName">Оставить предложенное</button></div></form></dialog>
 <script src="renderer.js"></script></body></html>
