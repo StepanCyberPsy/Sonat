@@ -13,9 +13,10 @@ const BROWSER = /chrome|chromium|safari|firefox|brave|edg(?:e|emac)|vivaldi|oper
 const SERVICES = { zoom: 'Zoom', 'google-meet': 'Google Meet', telemost: 'Яндекс Телемост',
   'mts-link': 'МТС Линк', teams: 'Microsoft Teams', jitsi: 'Jitsi Meet' };
 const IGNORE = /com\.stepancyberpsy\.sonat|^sonat\b|coreaudiod|voice.?memos|quicktime|audacity|garageband|logic pro|obsproject|screenflow|voicetrigger|dictation|com\.apple\.siri|zoom\.h[0-9]/i;
+const keyOf = p => (p.appBundleId || p.bundleId || String(p.appPid || p.pid || '')).toLowerCase();
+
 function sources(snapshot) {
   const signals = new Map();
-  const keyOf = p => (p.appBundleId || p.bundleId || String(p.appPid || p.pid || '')).toLowerCase();
   for (const p of snapshot.processes || []) {
     const key = keyOf(p);
     const name = p.appName || '';
@@ -98,6 +99,36 @@ class CallOffers {
   }
 }
 
+// Only sustained, healthy observations can end a recording. A hidden window,
+// a gap in the monitor or a meeting that has never used audio is inconclusive.
+class RecordedCall {
+  constructor(id, key = '') {
+    this.id = id;
+    this.key = key;
+    this.title = '';
+    this.audioSeen = false;
+    this.missingSince = null;
+    this.last = null;
+  }
+  observe(sample, now = Date.now()) {
+    const calls = sources(sample);
+    if (!this.key && calls.size === 1) this.key = calls.keys().next().value;
+    const meeting = sample.meetings?.find(m => keyOf(m) === this.key);
+    if (meeting?.topic) this.title = meeting.topic;
+    if (!this.title && calls.has(this.key)) this.title = calls.get(this.key);
+    const audio = sample.processes?.some(p => keyOf(p) === this.key && (p.inputActive || p.outputActive));
+    if (audio) this.audioSeen = true;
+    if (!this.audioSeen || audio || meeting || sample.status !== 'ok' ||
+        this.last === null || now - this.last > 8000 || now < this.last) {
+      this.missingSince = null;
+    } else {
+      this.missingSince ??= now;
+    }
+    this.last = now;
+    return this.missingSince !== null && now - this.missingSince >= 15000;
+  }
+}
+
 function watchCalls(executable, onSnapshot, onError) {
   let child, retry, stopped = false;
   function launch() {
@@ -128,4 +159,4 @@ function watchCalls(executable, onSnapshot, onError) {
   launch();
   return () => { stopped = true; clearTimeout(retry); child?.kill(); };
 }
-module.exports = { sources, CallOffers, watchCalls };
+module.exports = { sources, CallOffers, RecordedCall, watchCalls };

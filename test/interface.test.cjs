@@ -10,7 +10,7 @@ async function studio(mode, { systemAllowed = true, automatic = false, start = t
   const calls = [];
   const streams = [];
   function element(id) {
-    if (!elements.has(id)) elements.set(id, { value: '', dataset: {}, focus() {}, getContext: () => ({clearRect(){},fillRect(){}}), showModal(){this.open=true;}, close(){this.open=false;this.onclose?.();}, classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
+    if (!elements.has(id)) elements.set(id, { value: '', dataset: {}, focus() {}, select() {}, getContext: () => ({clearRect(){},fillRect(){}}), showModal(){this.open=true;}, close(){this.open=false;this.onclose?.();}, classList: { toggle() {} }, replaceChildren() {}, append() {}, querySelectorAll: () => [] });
     return elements.get(id);
   }
   function source(kind) {
@@ -44,6 +44,8 @@ async function studio(mode, { systemAllowed = true, automatic = false, start = t
   const listeners = {};
   const api = {
     info: async () => ({ folder:'/test', pending:[], automatic, callDetection: true, callOffer: null, shortcut: 'Control+Alt+R', shortcutWanted: 'Control+Alt+R' }), onProgress() {}, onSettings() {}, onUpdate() {}, onShortcutError(){}, shortcutCapture: async () => {},
+    nameRecording: async (id, title) => id + ' — ' + title,
+    onCallEnded: fn => { listeners.ended = fn; },
     onCallOffer: fn => { listeners.offer = fn; }, onCallDetectionError: fn => { listeners.error = fn; },
     acceptCall: async id => { calls.push('accept-' + id); return true; },
     dismissCall: async id => { calls.push('dismiss-' + id); }, setCallDetection: async () => {},
@@ -69,14 +71,20 @@ async function studio(mode, { systemAllowed = true, automatic = false, start = t
     setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array });
   await new Promise(resolve => setImmediate(resolve));
   if (start) await element('record').onclick();
-  return { calls, streams, element, listeners };
+  async function stopAndKeepName() {
+    const stopping = element('record').onclick();
+    await new Promise(resolve => setImmediate(resolve));
+    if (element('namePanel').open) await element('keepName').onclick();
+    await stopping;
+  }
+  return { calls, streams, element, listeners, stopAndKeepName };
 }
 
 test('call button requests two inputs and saves tail before preparing a private ChatGPT handoff', async () => {
   const s = await studio('call');
   assert.equal(s.element('record').textContent,'Остановить запись');
   assert.equal(s.streams[0].getVideoTracks()[0].ended,true);
-  await s.element('record').onclick();
+  await s.stopAndKeepName();
   assert.deepEqual(s.calls,['display','input','desktop','microphone','start-call','write','stop','prepare']);
   assert.ok(s.streams.every(stream => stream.getAudioTracks()[0].readyState === 'ended'));
   s.element('answer').value = 'Мой текст';
@@ -87,7 +95,7 @@ test('call button requests two inputs and saves tail before preparing a private 
 
 test('dictaphone works without API credits or desktop permission', async () => {
   const s = await studio('mic',{systemAllowed:false});
-  await s.element('record').onclick();
+  await s.stopAndKeepName();
   assert.deepEqual(s.calls,['input','microphone','start-mic','write','stop','prepare']);
   assert.match(s.element('status').textContent,/Аудио сохранено/);
 });
@@ -101,7 +109,7 @@ test('denied system capture leaves the call stopped and explains permission', as
 
 test('opted-in dictaphone submits only after stop and shows finished TXT', async () => {
   const s = await studio('mic', {automatic:true});
-  await s.element('record').onclick();
+  await s.stopAndKeepName();
   assert.deepEqual(s.calls, ['input','microphone','start-mic','write','stop','transcribe']);
   assert.match(s.element('status').textContent, /auto.txt/);
 });
@@ -181,7 +189,7 @@ test('call offers stay manual, skip once, then start call even when dictaphone w
   assert.ok(s.calls.includes('start-call'));
   assert.equal(s.calls.includes('start-mic'), false);
   assert.equal(s.element('sourceHint').textContent, 'Микрофон + компьютер');
-  await s.element('record').onclick();
+  await s.stopAndKeepName();
 });
 
 test('stale acknowledgement releases capture without starting or stopping any recording', async () => {
@@ -207,7 +215,7 @@ test('offer clicks while starting or recording never toggle recording off', asyn
   await s.element('callRecord').onclick();
   assert.equal(s.calls.includes('stop'), false);
   assert.equal(s.calls.filter(c => c === 'start-call').length, 1);
-  await s.element('record').onclick();
+  await s.stopAndKeepName();
 });
 
 test('settings and unfinished review preserve work when an offer is clicked', async () => {
@@ -218,7 +226,7 @@ test('settings and unfinished review preserve work when an offer is clicked', as
   assert.deepEqual(s.calls, []);
   s.element('closeSettings').onclick();
   await s.element('record').onclick();
-  await s.element('record').onclick();
+  await s.stopAndKeepName();
   s.element('answer').value = 'Черновик';
   await s.element('callRecord').onclick();
   assert.equal(s.element('answer').value, 'Черновик');
@@ -256,7 +264,7 @@ test('choosing the first folder keeps the offer and requires a second real click
   assert.equal(s.element('callOffer').hidden, false);
   await s.element('callRecord').onclick();
   assert.ok(s.calls.includes('start-call'));
-  await s.element('record').onclick();
+  await s.stopAndKeepName();
 });
 
 test('failed offer acknowledgement cleans up capture; failed preference restores the checkbox', async () => {
@@ -274,4 +282,24 @@ test('failed offer acknowledgement cleans up capture; failed preference restores
   assert.equal(s.element('callDetection').checked, true);
   assert.equal(s.element('callDetection').disabled, false);
   assert.match(s.element('callDetectionStatus').textContent, /Не удалось сохранить/);
+});
+
+test('a call-end event flushes once, then allows editing the suggested name before transcription', async () => {
+  const s = await studio('call', {automatic:true, overrides:{
+    stop:async()=>({title:'Совещание Zoom'}),
+    nameRecording:async(id,title)=>{assert.equal(title,'Продуктовый обзор'); return 'named';},
+    transcribe:async id=>{assert.equal(id,'named'); return {file:'Результат.txt'};}
+  }});
+  s.listeners.ended('other');
+  assert.equal(s.element('stage').textContent,'Идёт запись');
+  s.listeners.ended('id'); s.listeners.ended('id');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(s.element('namePanel').open);
+  assert.equal(s.element('recordingName').value,'Совещание Zoom');
+  assert.equal(s.calls.filter(value=>value==='write').length,1);
+  s.element('recordingName').value='Продуктовый обзор';
+  s.element('recordingName').oninput();
+  s.element('nameForm').onsubmit({preventDefault(){}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(s.element('status').textContent,/Результат.txt/);
 });

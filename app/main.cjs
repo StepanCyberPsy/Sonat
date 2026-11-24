@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, shell, sa
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
-const { Recording, pending, nextPart, savePart, sessionDir, saveJSON } = require('./recordings.cjs');
+const { Recording, pending, nextPart, savePart, sessionDir, nameRecording, cleanTitle, saveJSON } = require('./recordings.cjs');
 
 const { transcribe, checkConnection } = require('./transcription.cjs');
 
@@ -16,6 +16,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'sonat', privileges: { standard:
 const page = 'sonat://studio/index.html';
 let win, settingsFile, active, operation = '', writeError;
 let settings = {};
+let callPrompts;
 let quitting = false;
 let tray;
 function showMainWindow() {
@@ -52,11 +53,12 @@ async function finish() {
   if (!active) return;
   const current = active;
   operation = 'finish';
+  const suggestedTitle = callPrompts.end();
   try {
     await writeQueue;
     await current.finish();
     if (writeError) throw writeError;
-    return current.id;
+    return { title: cleanTitle(suggestedTitle) };
   } finally {
     active = null;
     operation = '';
@@ -110,7 +112,6 @@ async function setup() {
   });
   const shortcut = new RecordShortcut(globalShortcut, toggleFromKeyboard, { modifierRegistry });
   const updater = new Updater({ app });
-  let callPrompts;
   const updates = createUpdateMenu({
     updater, redraw: renderMenus,
     install: async version => {
@@ -140,15 +141,16 @@ async function setup() {
       if (error) throw new Error(error);
     }
   });
-  handle('start', mode => exclusive('start', async () => {
+  handle('start', (mode, offerId) => exclusive('start', async () => {
     if (!settings.folder) throw new Error('Выберите папку для расшифровок.');
     if (!['call', 'mic'].includes(mode)) throw new Error('Выберите режим записи.');
     active = await Recording.create(settings.folder, mode);
-    callPrompts.suppress();
+    callPrompts.begin(active.id, mode, offerId);
     writeError = null;
     writeQueue = Promise.resolve();
     return active.id;
   }));
+  handle('name-recording', (id, title) => exclusive('name', () => nameRecording(settings.folder, id, title)));
   handle('samples', (id, samples) => {
     if (active?.id !== id || operation || !(samples instanceof Uint8Array) || samples.length > 65536)
       throw new Error('Некорректный блок записи.');

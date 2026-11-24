@@ -13,7 +13,7 @@ function status(text) {
 }
 const phaseLabels = {
   idle: 'Готов к записи', starting: 'Подключение', recording: 'Идёт запись',
-  stopping: 'Сохранение', transcribing: 'Расшифровка', review: 'Запись сохранена',
+  naming: 'Запись сохранена', stopping: 'Сохранение', transcribing: 'Расшифровка', review: 'Запись сохранена',
   settings: 'Настройки', choosing: 'Выбор папки'
 };
 function message(e) {
@@ -51,7 +51,16 @@ async function refresh() {
     const button = document.createElement('button');
     button.textContent = 'Расшифровать';
     button.onclick = () => guarded(() => review(id));
-    li.append(id.replace(/^Sonat /, '').slice(0,-9), button);
+    const split = id.indexOf(' — ');
+    const base = split < 0 ? id : id.slice(0, split);
+    const date = base.replace(/^Sonat /, '').slice(0,-9);
+    const rename = document.createElement('button');
+    rename.textContent = 'Назвать';
+    rename.onclick = () => guarded(async () => {
+      try { await chooseName(id, split < 0 ? '' : id.slice(split + 3), false, true); }
+      finally { controls('idle'); await refresh(); }
+    });
+    li.append(split < 0 ? date : id.slice(split + 3) + ' · ' + date, rename, button);
     $('list').append(li);
   }
   $('queue').hidden = !prefs.pending.length;
@@ -400,7 +409,7 @@ async function start({ offerId } = {}) {
     s.node.connect(s.ctx.destination);
     if (call) monitor(s, s.streams[0], $('system'), 0.5);
     monitor(s, mic, $('mic'), call ? 0.5 : 1);
-    s.id = await api.start(call ? 'call' : 'mic');
+    s.id = await api.start(call ? 'call' : 'mic', offerId);
     s.stopped = new Promise(resolve => { s.flushed = resolve; });
     s.node.port.onmessage = ({ data }) => {
       if (data === 'stopped') return s.flushed();
@@ -423,6 +432,7 @@ async function start({ offerId } = {}) {
     s.timer = setInterval(() => tick(s), 150);
     s.node.onprocessorerror = () => { s.flushed(); interrupt(s, 'Обработка звука прервана.'); };
     controls('recording');
+    if (s.callEnded) { guarded(() => stop(s)); return; }
     status(call ? 'Записываются микрофон и звук компьютера.' : 'Записывается микрофон.');
   } catch (e) {
     await release(s);
@@ -433,7 +443,49 @@ async function start({ offerId } = {}) {
     throw e;
   }
 }
+api.onCallEnded(id => {
+  if (live?.id !== id) return;
+  live.callEnded = true;
+  if (phase === 'recording') guarded(() => stop(live));
+});
+
+function chooseName(id, suggested, ended, editing = false) {
+  controls('naming');
+  const panel = $('namePanel'), field = $('recordingName'), hint = $('nameHint');
+  const fallback = id.split(' — ')[0].slice(6, -9);
+  field.value = suggested || '';
+  field.placeholder = fallback;
+  hint.textContent = editing ? 'Это название появится у папки с аудио и файла с текстом.' : (ended ? 'Звонок завершён. ' : '') + 'Аудио сохранено. Через 20 секунд Sonat продолжит с предложенным названием.';
+  panel.showModal();
+  field.focus();
+  field.select();
+  return new Promise(resolve => {
+    let saving = false;
+    const timer = editing ? null : setTimeout(() => save(suggested), 20000);
+    field.oninput = () => { clearTimeout(timer); hint.textContent = 'Нажмите «Сохранить», когда название будет готово.'; };
+    async function save(title) {
+      if (saving) return;
+      saving = true;
+      clearTimeout(timer);
+      try {
+        const named = title?.trim() ? await api.nameRecording(id, title) : id;
+        panel.close();
+        resolve(named);
+      } catch (e) {
+        hint.textContent = message(e);
+        $('keepName').textContent = 'Продолжить без названия';
+        $('keepName').onclick = () => save('');
+      } finally { saving = false; }
+    }
+    $('keepName').textContent = suggested ? 'Оставить предложенное' : 'Оставить дату';
+    $('keepName').onclick = () => save(suggested);
+    $('nameForm').onsubmit = event => { event.preventDefault(); void save(field.value); };
+    panel.oncancel = event => { event.preventDefault(); void save(suggested); };
+  });
+}
+
 async function stop(s) {
+  let saved;
   controls('stopping');
   status('Сохраняю аудио…');
   try {
@@ -446,15 +498,16 @@ async function stop(s) {
     } finally { clearTimeout(timeout); }
     await release(s);
     await s.writes;
-    await api.stop(s.id);
+    saved = await api.stop(s.id);
   } finally {
     live = null;
     $('mic').value = $('system').value = 0;
     controls('idle');
     await refresh();
   }
-  if (s.fault) { status(s.fault + ' Доступная часть записи сохранена.'); return; }
-  await review(s.id);
+  const id = await chooseName(s.id, saved?.title || '', s.callEnded);
+  if (s.fault) { controls('idle'); await refresh(); status(s.fault + ' Доступная часть записи сохранена.'); return; }
+  try { await review(id); } finally { await refresh(); }
 }
 $('record').onclick = () => guarded(async () => {
   if (phase === 'recording') return stop(live);
